@@ -1,0 +1,15 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Runtime project folders (regenerable from raw, but raw contains client data — never commit)
+/demo-data/
+*.log
+
+# Local env / secrets
+.env
+.env.*
+
+# Editor
+.vscode/
+.idea/

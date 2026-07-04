@@ -1,0 +1,98 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/tinotax-core",
+  "crates/tinotax-config",
+  "crates/tinotax-connectors",
+  "crates/tinotax-store",
+  "crates/tinotax-normalise",
+  "crates/tinotax-diagnostics",
+  "crates/tinotax-review",
+  "crates/tinotax-report",
+  "crates/tinotax-tax-uk",
+  "crates/tinotax-app",
+  "crates/tinotax-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/isich/tinotax"
+
+[workspace.dependencies]
+# Internal crates
+tinotax-core = { path = "crates/tinotax-core" }
+tinotax-config = { path = "crates/tinotax-config" }
+tinotax-connectors = { path = "crates/tinotax-connectors" }
+tinotax-store = { path = "crates/tinotax-store" }
+tinotax-normalise = { path = "crates/tinotax-normalise" }
+tinotax-diagnostics = { path = "crates/tinotax-diagnostics" }
+tinotax-review = { path = "crates/tinotax-review" }
+tinotax-report = { path = "crates/tinotax-report" }
+tinotax-tax-uk = { path = "crates/tinotax-tax-uk" }
+tinotax-app = { path = "crates/tinotax-app" }
+
+# Errors
+anyhow = "1"
+thiserror = "2"
+miette = { version = "7", features = ["fancy"] }
+
+# Serialisation
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["arbitrary_precision", "preserve_order"] }
+serde_with = "3"
+toml = "0.9"
+
+# CLI + async runtime
+clap = { version = "4", features = ["derive", "env"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "time"] }
+
+# HTTP
+reqwest = { version = "0.12", default-features = false, features = [
+  "json",
+  "rustls-tls",
+  "gzip",
+  "brotli",
+  "deflate",
+] }
+async-trait = "0.1"
+
+# Numerics — never f64 for money
+rust_decimal = { version = "1", features = [
+  "serde-with-str",
+  "serde-with-arbitrary-precision",
+  "macros",
+] }
+
+# Chain primitives
+alloy-primitives = { version = "1", features = ["serde"] }
+near-account-id = "1"
+
+# Time / ids / enums
+jiff = { version = "0.2", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+strum = { version = "0.27", features = ["derive"] }
+
+# Files / hashing
+csv = "1"
+blake3 = "1"
+walkdir = "2"
+directories = "6"
+camino = "1"
+
+# Observability / UX
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+indicatif = "0.17"
+tabled = "0.17"
+
+# Dev / test (referenced from each crate's [dev-dependencies])
+assert_cmd = "2"
+wiremock = "0.6"
+insta = { version = "1", features = ["json"] }
+tempfile = "3"
+pretty_assertions = "1"
+
+[profile.release]
+lto = "thin"

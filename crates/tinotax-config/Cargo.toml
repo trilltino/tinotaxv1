@@ -1,0 +1,15 @@
+[package]
+name = "tinotax-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tinotax-core = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
+camino = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

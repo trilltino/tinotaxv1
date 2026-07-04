@@ -1,0 +1,38 @@
+[project]
+name = "fox-three-wallet-demo"
+base_currency = "GBP"
+period_start = "2017-01-01T00:00:00Z"
+period_end = "2025-04-05T23:59:59Z"
+
+[[wallets]]
+id = "near_foxboss"
+name = "NEAR foxboss"
+chain = "near"
+address = "foxboss.near"
+provider = "nearblocks"
+
+[[wallets]]
+id = "lisk_main"
+name = "Lisk EVM wallet"
+chain = "lisk-evm"
+address = "0xPUT_ADDRESS_HERE"
+provider = "lisk_blockscout"
+
+[[wallets]]
+id = "iota_main"
+name = "IOTA EVM wallet"
+chain = "iota-evm"
+address = "0xPUT_ADDRESS_HERE"
+provider = "iota_blockscout"
+
+[providers.lisk_blockscout]
+kind = "blockscout"
+base_url = "https://blockscout.lisk.com/api/v2"
+
+[providers.iota_blockscout]
+kind = "blockscout"
+base_url = "https://explorer.evm.iota.org/api/v2"
+
+[providers.nearblocks]
+kind = "nearblocks"
+base_url = "https://api.nearblocks.io/v1"

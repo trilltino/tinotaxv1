@@ -13,3 +13,8 @@ csv = { workspace = true }
 anyhow = { workspace = true }
 camino = { workspace = true }
 tracing = { workspace = true }
+rust_decimal = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+pretty_assertions = { workspace = true }

@@ -13,8 +13,13 @@ pub use nearblocks::NearBlocksFetcher;
 /// one-way (`app` maps config entries into this).
 #[derive(Debug, Clone)]
 pub enum ProviderSpec {
-    Blockscout { base_url: String },
-    NearBlocks { base_url: String, api_key: Option<String> },
+    Blockscout {
+        base_url: String,
+    },
+    NearBlocks {
+        base_url: String,
+        api_key: Option<String>,
+    },
 }
 
 pub fn make_fetcher(spec: &ProviderSpec) -> anyhow::Result<Box<dyn WalletFetcher>> {
@@ -23,8 +28,10 @@ pub fn make_fetcher(spec: &ProviderSpec) -> anyhow::Result<Box<dyn WalletFetcher
         ProviderSpec::Blockscout { base_url } => {
             Box::new(BlockscoutFetcher::new(base_url.clone(), http))
         }
-        ProviderSpec::NearBlocks { base_url, api_key } => {
-            Box::new(NearBlocksFetcher::new(base_url.clone(), api_key.clone(), http))
-        }
+        ProviderSpec::NearBlocks { base_url, api_key } => Box::new(NearBlocksFetcher::new(
+            base_url.clone(),
+            api_key.clone(),
+            http,
+        )),
     })
 }

@@ -45,7 +45,11 @@ impl BlockscoutFetcher {
         let paths = ProjectPaths::new(ctx.project_dir.to_owned());
         let cache = EndpointCache::open(&paths, &wallet.chain, &wallet.address, dir_name)?;
 
-        let existing = if ctx.resume { cache.read_cursor()? } else { None };
+        let existing = if ctx.resume {
+            cache.read_cursor()?
+        } else {
+            None
+        };
         let resumed = existing.is_some();
         let mut cursor = existing.unwrap_or_else(Cursor::start);
         if cursor.done {
@@ -53,7 +57,10 @@ impl BlockscoutFetcher {
             return Ok((0, 0, true));
         }
 
-        let url = format!("{}/addresses/{}/{}", self.base_url, wallet.address, url_segment);
+        let url = format!(
+            "{}/addresses/{}/{}",
+            self.base_url, wallet.address, url_segment
+        );
         let mut pages_fetched = 0u64;
         let mut items_fetched = 0u64;
 
@@ -97,7 +104,10 @@ impl BlockscoutFetcher {
                 );
             }
 
-            let next = body.get("next_page_params").filter(|v| !v.is_null()).cloned();
+            let next = body
+                .get("next_page_params")
+                .filter(|v| !v.is_null())
+                .cloned();
             match next {
                 Some(params) if item_count > 0 => {
                     cursor.next_page += 1;
@@ -150,7 +160,14 @@ impl WalletFetcher for BlockscoutFetcher {
 
         for (dir_name, url_segment) in ENDPOINTS {
             let (pages, items, resumed) = self
-                .fetch_endpoint(ctx, wallet, dir_name, url_segment, &mut manifest, &manifest_path)
+                .fetch_endpoint(
+                    ctx,
+                    wallet,
+                    dir_name,
+                    url_segment,
+                    &mut manifest,
+                    &manifest_path,
+                )
                 .await?;
             report.pages_fetched += pages;
             report.items_fetched += items;

@@ -8,8 +8,12 @@ members = [
   "crates/tinotax-normalise",
   "crates/tinotax-diagnostics",
   "crates/tinotax-review",
+  "crates/tinotax-ledger",
+  "crates/tinotax-cex",
+  "crates/tinotax-pricing",
   "crates/tinotax-report",
   "crates/tinotax-tax-uk",
+  "crates/tinotax-evidence",
   "crates/tinotax-app",
   "crates/tinotax-cli",
 ]
@@ -29,8 +33,12 @@ tinotax-store = { path = "crates/tinotax-store" }
 tinotax-normalise = { path = "crates/tinotax-normalise" }
 tinotax-diagnostics = { path = "crates/tinotax-diagnostics" }
 tinotax-review = { path = "crates/tinotax-review" }
+tinotax-ledger = { path = "crates/tinotax-ledger" }
+tinotax-cex = { path = "crates/tinotax-cex" }
+tinotax-pricing = { path = "crates/tinotax-pricing" }
 tinotax-report = { path = "crates/tinotax-report" }
 tinotax-tax-uk = { path = "crates/tinotax-tax-uk" }
+tinotax-evidence = { path = "crates/tinotax-evidence" }
 tinotax-app = { path = "crates/tinotax-app" }
 
 # Errors

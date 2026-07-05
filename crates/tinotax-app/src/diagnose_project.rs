@@ -8,7 +8,10 @@ pub fn diagnose_project(project: &str) -> Result<Diagnostics> {
     let (paths, config) = open_project(project)?;
     let diagnostics = tinotax_diagnostics::run(&paths, &config.project.name)?;
 
-    println!("project {}: {} events", diagnostics.project, diagnostics.total_events);
+    println!(
+        "project {}: {} events",
+        diagnostics.project, diagnostics.total_events
+    );
     println!(
         "{:<10} {:<44} {:>8} {:>6} {:>6} {:>6} {:>6} {:>7}",
         "chain", "wallet", "events", "in", "out", "self", "fees", "review"

@@ -47,7 +47,11 @@ impl WalletFetcher for NearBlocksFetcher {
 
         let cache = EndpointCache::open(&paths, &wallet.chain, &wallet.address, "transactions")?;
 
-        let existing = if ctx.resume { cache.read_cursor()? } else { None };
+        let existing = if ctx.resume {
+            cache.read_cursor()?
+        } else {
+            None
+        };
         let resumed = existing.is_some();
         let mut cursor = existing.unwrap_or_else(Cursor::start);
 

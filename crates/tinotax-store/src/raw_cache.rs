@@ -40,12 +40,7 @@ pub struct EndpointCache {
 }
 
 impl EndpointCache {
-    pub fn open(
-        paths: &ProjectPaths,
-        chain: &str,
-        wallet: &str,
-        endpoint: &str,
-    ) -> Result<Self> {
+    pub fn open(paths: &ProjectPaths, chain: &str, wallet: &str, endpoint: &str) -> Result<Self> {
         let dir = paths.wallet_raw_dir(chain, wallet).join(endpoint);
         std::fs::create_dir_all(&dir).with_context(|| format!("creating {dir}"))?;
         Ok(Self {
@@ -104,7 +99,9 @@ impl EndpointCache {
     /// All cached pages in page order: (page number, absolute path).
     pub fn list_pages(&self) -> Result<Vec<(u64, Utf8PathBuf)>> {
         let mut pages = Vec::new();
-        for entry in std::fs::read_dir(&self.dir).with_context(|| format!("listing {}", self.dir))? {
+        for entry in
+            std::fs::read_dir(&self.dir).with_context(|| format!("listing {}", self.dir))?
+        {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().to_string();
             if let Some(num) = name

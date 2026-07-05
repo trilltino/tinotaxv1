@@ -4,7 +4,13 @@
 
 # Runtime project folders (regenerable from raw, but raw contains client data — never commit)
 /demo-data/
+/fox-project/
 *.log
+
+# Real client wallet addresses / sources — copy wallets.example.toml instead
+/wallets.toml
+/opening_pools.toml
+/imports/
 
 # Local env / secrets
 .env

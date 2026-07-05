@@ -87,7 +87,10 @@ pub struct AuditManifest {
 
 pub fn hash_file(path: &Utf8Path) -> Result<(String, u64)> {
     let bytes = std::fs::read(path).with_context(|| format!("reading {path}"))?;
-    Ok((blake3::hash(&bytes).to_hex().to_string(), bytes.len() as u64))
+    Ok((
+        blake3::hash(&bytes).to_hex().to_string(),
+        bytes.len() as u64,
+    ))
 }
 
 /// Collect every `raw_manifest.json` under `raw/`.
@@ -96,12 +99,14 @@ pub fn collect_raw_manifests(raw_dir: &Utf8Path) -> Result<Vec<RawManifest>> {
     if !raw_dir.exists() {
         return Ok(manifests);
     }
-    for entry in walkdir::WalkDir::new(raw_dir).into_iter().filter_map(|e| e.ok()) {
+    for entry in walkdir::WalkDir::new(raw_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         if entry.file_type().is_file() && entry.file_name() == "raw_manifest.json" {
             let path = Utf8PathBuf::from_path_buf(entry.path().to_path_buf())
                 .map_err(|p| anyhow::anyhow!("non-UTF8 path {}", p.display()))?;
-            let text =
-                std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
+            let text = std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
             let manifest: RawManifest =
                 serde_json::from_str(&text).with_context(|| format!("parsing {path}"))?;
             manifests.push(manifest);

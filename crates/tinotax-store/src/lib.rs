@@ -4,9 +4,7 @@ pub mod project_dirs;
 pub mod raw_cache;
 
 pub use jsonl::{read_jsonl, JsonlWriter};
-pub use manifest::{
-    hash_file, AuditManifest, OutputFileEntry, RawFileManifestEntry, RawManifest,
-};
+pub use manifest::{hash_file, AuditManifest, OutputFileEntry, RawFileManifestEntry, RawManifest};
 pub use project_dirs::ProjectPaths;
 pub use raw_cache::{Cursor, EndpointCache};
 

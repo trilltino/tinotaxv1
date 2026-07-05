@@ -11,7 +11,9 @@ fn provider_spec(entry: &ProviderEntry) -> ProviderSpec {
         },
         ProviderKind::Nearblocks => ProviderSpec::NearBlocks {
             base_url: entry.base_url.clone(),
-            api_key: std::env::var("NEARBLOCKS_API_KEY").ok().filter(|k| !k.is_empty()),
+            api_key: std::env::var("NEARBLOCKS_API_KEY")
+                .ok()
+                .filter(|k| !k.is_empty()),
         },
     }
 }

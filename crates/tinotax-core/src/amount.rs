@@ -1,5 +1,4 @@
 use rust_decimal::Decimal;
-use std::str::FromStr;
 
 use crate::error::CoreError;
 
@@ -35,7 +34,11 @@ impl ScaledAmount {
         } else {
             let d = decimals as usize;
             if digits.len() > d {
-                format!("{}.{}", &digits[..digits.len() - d], &digits[digits.len() - d..])
+                format!(
+                    "{}.{}",
+                    &digits[..digits.len() - d],
+                    &digits[digits.len() - d..]
+                )
             } else {
                 format!("0.{}{}", "0".repeat(d - digits.len()), digits)
             }
@@ -43,10 +46,11 @@ impl ScaledAmount {
 
         // Decimal holds 28-29 significant digits. If the value overflows,
         // drop least-significant fractional digits until it fits and report
-        // the conversion as inexact.
+        // the conversion as inexact. `from_str` would round silently, so use
+        // `from_str_exact`, which errors whenever a digit would be lost.
         let mut exact = true;
         loop {
-            match Decimal::from_str(&text) {
+            match Decimal::from_str_exact(&text) {
                 Ok(value) => return Ok(Self { value, exact }),
                 Err(_) => {
                     let Some(dot) = text.find('.') else {

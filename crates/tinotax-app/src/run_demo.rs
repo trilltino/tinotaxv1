@@ -23,17 +23,21 @@ pub async fn run_demo(config: &str, out: &str, resume: bool) -> Result<()> {
 
     println!("\n== 5/5 review + reports ==");
     crate::export_review(out)?;
+    crate::export_review_all(out)?;
     crate::export_reports(out)?;
 
     println!("\ndemo complete — outputs in {out}/out:");
     for name in [
         "normalised_transactions.csv",
         "wallet_activity_summary.csv",
+        "review_all_transactions.csv",
         "manual_review.csv",
         "diagnostics.json",
         "audit_manifest.json",
     ] {
         println!("  {out}/out/{name}");
     }
+    println!("\nnext: edit review_all_transactions.csv, then `review apply`, `ledger build`,");
+    println!("`prices import`/`prices fetch`, `ledger price`, `calculate uk`, `pack hmrc`.");
     Ok(())
 }

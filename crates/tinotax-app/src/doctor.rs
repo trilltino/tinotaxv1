@@ -10,7 +10,9 @@ pub async fn doctor() -> Result<()> {
 
     let config_path = Utf8PathBuf::from("wallets.toml");
     if !config_path.exists() {
-        println!("config: no wallets.toml in the current directory (pass --config to other commands)");
+        println!(
+            "config: no wallets.toml in the current directory (pass --config to other commands)"
+        );
         return Ok(());
     }
 

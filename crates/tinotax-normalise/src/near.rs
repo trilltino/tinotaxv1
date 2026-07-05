@@ -4,12 +4,12 @@
 
 use anyhow::{Context, Result};
 use rust_decimal::Decimal;
-use tinotax_core::{
-    Chain, Confidence, Direction, EventType, NormalisedEvent, ScaledAmount, SourceKind,
-    SourceRef, WalletSource,
-};
 use tinotax_connectors::models::nearblocks::{Txn, TxnsPage};
 use tinotax_connectors::models::{value_as_raw_string, value_as_u64};
+use tinotax_core::{
+    Chain, Confidence, Direction, EventType, NormalisedEvent, ScaledAmount, SourceKind, SourceRef,
+    WalletSource,
+};
 use tinotax_store::{EndpointCache, ProjectPaths};
 
 use crate::classify::classify_contract_call;
@@ -55,7 +55,10 @@ pub fn normalise_near_wallet(
 
             let mut reasons: Vec<String> = Vec::new();
 
-            let signer = txn.signer_account_id.clone().map(|s| s.to_ascii_lowercase());
+            let signer = txn
+                .signer_account_id
+                .clone()
+                .map(|s| s.to_ascii_lowercase());
             let receiver = txn
                 .receiver_account_id
                 .clone()
@@ -109,9 +112,8 @@ pub fn normalise_near_wallet(
                 _ => (Decimal::ZERO, None),
             };
 
-            let is_plain_transfer =
-                matches!(action_kind.as_deref(), Some(kind) if kind.eq_ignore_ascii_case("transfer"))
-                    && method.is_none();
+            let is_plain_transfer = matches!(action_kind.as_deref(), Some(kind) if kind.eq_ignore_ascii_case("transfer"))
+                && method.is_none();
 
             let (event_type, confidence) = if is_plain_transfer && amount > Decimal::ZERO {
                 (EventType::NativeTransfer, Confidence::High)
@@ -202,5 +204,7 @@ pub fn normalise_near_wallet(
 fn near_timestamp(value: Option<&serde_json::Value>) -> Option<String> {
     let raw = value_as_raw_string(value)?;
     let nanos: i128 = raw.parse().ok()?;
-    jiff::Timestamp::from_nanosecond(nanos).ok().map(|t| t.to_string())
+    jiff::Timestamp::from_nanosecond(nanos)
+        .ok()
+        .map(|t| t.to_string())
 }

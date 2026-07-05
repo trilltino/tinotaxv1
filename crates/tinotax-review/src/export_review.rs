@@ -48,10 +48,7 @@ pub fn export_review(paths: &ProjectPaths) -> Result<u64> {
             event.from_address.as_deref().unwrap_or(""),
             event.to_address.as_deref().unwrap_or(""),
             event.fee_asset.as_deref().unwrap_or(""),
-            &event
-                .fee_amount
-                .map(|a| a.to_string())
-                .unwrap_or_default(),
+            &event.fee_amount.map(|a| a.to_string()).unwrap_or_default(),
             event.confidence.as_str(),
             &event.review_reasons.join("; "),
             suggested_action(event),

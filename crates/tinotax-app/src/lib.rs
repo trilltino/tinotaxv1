@@ -6,6 +6,7 @@ pub mod doctor;
 pub mod export_review;
 pub mod fetch_project;
 pub mod normalise_project;
+pub mod pipeline;
 pub mod run_demo;
 
 use anyhow::{Context, Result};
@@ -18,6 +19,10 @@ pub use doctor::doctor;
 pub use export_review::{apply_review, export_review};
 pub use fetch_project::fetch_project;
 pub use normalise_project::normalise_project;
+pub use pipeline::{
+    calculate_uk, export_review_all, import_cex, ledger_build, ledger_price, pack_hmrc,
+    prices_fetch, prices_import, prices_missing,
+};
 pub use run_demo::run_demo;
 
 /// Create a project folder from a config file (`project init`).

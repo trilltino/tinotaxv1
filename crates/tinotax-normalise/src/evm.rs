@@ -5,12 +5,12 @@ use std::collections::HashSet;
 
 use anyhow::{Context, Result};
 use rust_decimal::Decimal;
-use tinotax_core::{
-    Chain, Confidence, Direction, EventType, NormalisedEvent, ScaledAmount, SourceKind,
-    SourceRef, WalletSource,
-};
 use tinotax_connectors::models::blockscout::{Page, TokenTransfer, Transaction};
 use tinotax_connectors::models::value_as_u64;
+use tinotax_core::{
+    Chain, Confidence, Direction, EventType, NormalisedEvent, ScaledAmount, SourceKind, SourceRef,
+    WalletSource,
+};
 use tinotax_store::{EndpointCache, ProjectPaths};
 
 use crate::classify::classify_contract_call;
@@ -40,8 +40,7 @@ fn read_pages(
     let mut pages = Vec::new();
     for (page_num, path) in cache.list_pages()? {
         let text = std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
-        let page: Page =
-            serde_json::from_str(&text).with_context(|| format!("parsing {path}"))?;
+        let page: Page = serde_json::from_str(&text).with_context(|| format!("parsing {path}"))?;
         pages.push((page_num, paths.relative(&path), page));
     }
     Ok(pages)
@@ -105,12 +104,10 @@ fn normalise_token_transfers(
             }
 
             let token = transfer.token.as_ref();
-            let symbol = token
-                .and_then(|t| t.symbol.clone())
-                .unwrap_or_else(|| {
-                    reasons.push("missing_token_symbol".to_string());
-                    "UNKNOWN".to_string()
-                });
+            let symbol = token.and_then(|t| t.symbol.clone()).unwrap_or_else(|| {
+                reasons.push("missing_token_symbol".to_string());
+                "UNKNOWN".to_string()
+            });
             let contract = token.and_then(|t| t.address.clone());
 
             let decimals: Option<u32> = transfer
@@ -314,8 +311,7 @@ fn normalise_transactions(
             let has_value = !raw_value.is_empty() && raw_value != "0";
             if has_value && !failed {
                 let mut reasons = Vec::new();
-                let direction =
-                    direction_relative_to(&wallet_addr, from.as_deref(), to.as_deref());
+                let direction = direction_relative_to(&wallet_addr, from.as_deref(), to.as_deref());
                 if direction == Direction::Unknown {
                     reasons.push("native_transfer_direction_unknown".to_string());
                 }
@@ -341,7 +337,11 @@ fn normalise_transactions(
                             scaled.value,
                             Some(raw_value.clone()),
                             0,
-                            if needs_review { Confidence::Medium } else { Confidence::High },
+                            if needs_review {
+                                Confidence::Medium
+                            } else {
+                                Confidence::High
+                            },
                             needs_review,
                             reasons,
                             id,
@@ -403,7 +403,11 @@ fn normalise_transactions(
             let has_token_movement = token_tx_hashes.contains(&tx_hash);
             if !has_value && !has_token_movement && !failed {
                 let class = classify_contract_call(tx.method.as_deref());
-                let direction = if is_sender { Direction::Out } else { Direction::In };
+                let direction = if is_sender {
+                    Direction::Out
+                } else {
+                    Direction::In
+                };
                 let id = event_id(
                     &wallet.chain,
                     &wallet_addr,

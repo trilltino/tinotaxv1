@@ -71,9 +71,15 @@ pub fn export_transactions_csv(paths: &ProjectPaths) -> Result<u64> {
             if e.needs_review { "true" } else { "false" },
             &e.review_reasons.join("; "),
             e.source_ref.raw_file.as_str(),
-            &e.source_ref.raw_page.map(|v| v.to_string()).unwrap_or_default(),
+            &e.source_ref
+                .raw_page
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
             e.source_ref.json_path.as_deref().unwrap_or(""),
-            &e.source_ref.log_index.map(|v| v.to_string()).unwrap_or_default(),
+            &e.source_ref
+                .log_index
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
             &e.source_ref
                 .movement_index
                 .map(|v| v.to_string())

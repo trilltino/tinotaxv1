@@ -26,6 +26,21 @@ impl<T: Serialize> JsonlWriter<T> {
         })
     }
 
+    /// Open for appending, creating the file if needed. Used for append-only
+    /// logs like `review_overrides.jsonl` where history must survive.
+    pub fn append(path: &Utf8Path) -> Result<Self> {
+        let file = File::options()
+            .create(true)
+            .append(true)
+            .open(path)
+            .with_context(|| format!("opening {path} for append"))?;
+        Ok(Self {
+            writer: BufWriter::new(file),
+            written: 0,
+            _marker: PhantomData,
+        })
+    }
+
     pub fn write(&mut self, record: &T) -> Result<()> {
         serde_json::to_writer(&mut self.writer, record)?;
         self.writer.write_all(b"\n")?;

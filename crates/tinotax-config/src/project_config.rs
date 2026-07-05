@@ -31,6 +31,12 @@ pub enum ConfigError {
     #[error("duplicate wallet id {0:?}")]
     DuplicateWalletId(String),
 
+    #[error("duplicate cex_csvs id {0:?}")]
+    DuplicateCexId(String),
+
+    #[error("cex_csvs {id:?} uses platform = \"generic\" but has no [cex_csvs.mapping] table")]
+    GenericCexWithoutMapping { id: String },
+
     #[error("config declares no wallets")]
     NoWallets,
 }
@@ -42,6 +48,8 @@ pub struct ProjectConfig {
     pub wallets: Vec<WalletEntry>,
     #[serde(default)]
     pub providers: BTreeMap<String, ProviderEntry>,
+    #[serde(default)]
+    pub cex_csvs: Vec<CexCsvEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,6 +94,43 @@ pub enum ProviderKind {
     Nearblocks,
 }
 
+/// One CEX CSV export to import. The original file is copied unedited into
+/// `raw/cex/<id>/` and hashed — HMRC asks for full, unedited trading data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CexCsvEntry {
+    pub id: String,
+    pub platform: CexPlatform,
+    /// Path to the export, relative to wherever the command is run.
+    pub path: String,
+    /// For `platform = "generic"`: maps canonical column names
+    /// (timestamp, type, asset, amount, fee_asset, fee_amount, note)
+    /// onto the CSV's actual headers.
+    #[serde(default)]
+    pub mapping: Option<BTreeMap<String, String>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CexPlatform {
+    Binance,
+    Coinbase,
+    Kraken,
+    Awaken,
+    Generic,
+}
+
+impl CexPlatform {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Binance => "binance",
+            Self::Coinbase => "coinbase",
+            Self::Kraken => "kraken",
+            Self::Awaken => "awaken",
+            Self::Generic => "generic",
+        }
+    }
+}
+
 impl ProjectConfig {
     pub fn load(path: &Utf8Path) -> Result<Self, ConfigError> {
         let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Io {
@@ -115,6 +160,15 @@ impl ProjectConfig {
                     provider: wallet.provider.clone(),
                     known: self.providers.keys().cloned().collect(),
                 });
+            }
+        }
+        let mut seen_cex = std::collections::BTreeSet::new();
+        for cex in &self.cex_csvs {
+            if !seen_cex.insert(&cex.id) {
+                return Err(ConfigError::DuplicateCexId(cex.id.clone()));
+            }
+            if cex.platform == CexPlatform::Generic && cex.mapping.is_none() {
+                return Err(ConfigError::GenericCexWithoutMapping { id: cex.id.clone() });
             }
         }
         Ok(())

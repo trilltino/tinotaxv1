@@ -109,10 +109,7 @@ pub fn normalise_project(
             source_id: w.id.clone(),
             chain: w.chain.clone(),
             wallet: w.address.clone(),
-            events: events
-                .iter()
-                .filter(|e| e.source_id == w.id)
-                .count() as u64,
+            events: events.iter().filter(|e| e.source_id == w.id).count() as u64,
         })
         .collect();
 

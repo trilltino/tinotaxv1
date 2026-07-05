@@ -31,7 +31,8 @@ impl HttpClient {
         query: &[(String, String)],
         headers: &[(&str, String)],
     ) -> Result<serde_json::Value> {
-        self.get_json_with_attempts(url, query, headers, MAX_ATTEMPTS).await
+        self.get_json_with_attempts(url, query, headers, MAX_ATTEMPTS)
+            .await
     }
 
     /// Single-shot variant for health checks (`doctor`) where waiting out

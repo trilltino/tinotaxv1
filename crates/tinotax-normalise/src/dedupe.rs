@@ -1,3 +1,7 @@
+//! Deterministic duplicate removal for normalised events.
+//!
+//! Normalisers can produce overlapping rows from multiple raw endpoints. This
+//! module keeps the first event for each deterministic ID and drops repeats.
 use std::collections::HashSet;
 
 use tinotax_core::NormalisedEvent;

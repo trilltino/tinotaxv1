@@ -1,3 +1,8 @@
+//! Connector traits and shared fetch result types.
+//!
+//! Application code calls this abstraction so each provider can implement its
+//! own pagination and authentication details while preserving the same raw
+//! cache contract.
 use async_trait::async_trait;
 use camino::Utf8Path;
 use serde::{Deserialize, Serialize};

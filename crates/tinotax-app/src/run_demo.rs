@@ -1,3 +1,9 @@
+//! One-shot demo pipeline used for early wallet-ingestion proof.
+//!
+//! The demo creates a project, fetches wallets, normalises events, writes
+//! diagnostics, and exports review files. It deliberately stops before final
+//! tax calculation because those rows still need human review and pricing.
+
 use anyhow::Result;
 
 /// The Friday command: whole pipeline in one shot.

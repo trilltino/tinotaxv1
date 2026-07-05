@@ -1,3 +1,7 @@
+//! Supported chain identifiers and parsing.
+//!
+//! Chain names are stored as stable string labels because they flow into raw
+//! paths, source references, and review spreadsheets.
 use serde::{Deserialize, Serialize};
 
 /// Chains the demo knows about. Anything else is carried through as `Other`

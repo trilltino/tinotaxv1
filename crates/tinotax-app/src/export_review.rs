@@ -1,3 +1,8 @@
+//! Thin orchestration wrappers for review export/apply commands.
+//!
+//! The review crate owns CSV shape and validation. This module wires checked
+//! project paths to that crate and prints human-readable counts.
+
 use anyhow::Result;
 use camino::Utf8PathBuf;
 

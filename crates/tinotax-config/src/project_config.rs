@@ -1,3 +1,7 @@
+//! Project configuration schema and validation.
+//!
+//! This module mirrors the user-facing `wallets.toml`/`project.toml` shape and
+//! performs validation before API calls or filesystem writes happen.
 use std::collections::BTreeMap;
 
 use camino::Utf8Path;

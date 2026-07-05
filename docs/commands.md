@@ -1,7 +1,16 @@
 # Commands
 
-All commands are `cargo run -p tinotax-cli -- <command>` during development
-(the binary is named `tinotax`).
+During development, prefer `just` recipes for terminal startup commands:
+
+```bash
+just --list
+just doctor
+just startup-demo
+just run --help
+```
+
+The recipes wrap `cargo run -p tinotax-cli -- <command>`; the installed binary
+is named `tinotax`.
 
 | Command | What it does |
 |---|---|

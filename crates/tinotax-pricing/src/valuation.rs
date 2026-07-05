@@ -68,6 +68,8 @@ pub fn price_ledger(paths: &ProjectPaths) -> Result<PricingSummary> {
     for row in ledger {
         summary.total += 1;
         let mut row = row;
+        // Work one row at a time so audit rows can point to the exact ledger
+        // event and field that received an external price.
         match needed_field(&row) {
             None => {
                 // Distinguish "user already valued it" from "not taxable".
@@ -79,6 +81,8 @@ pub fn price_ledger(paths: &ProjectPaths) -> Result<PricingSummary> {
             }
             Some(field) => match book.lookup(&row.asset_symbol, &row.timestamp) {
                 Some(resolved) => {
+                    // The price book stores unit GBP prices; ledger values are
+                    // row quantity times unit price, rounded for HMRC reports.
                     let value = (row.quantity * resolved.price).round_dp(2);
                     match field {
                         NeededField::Proceeds => row.proceeds_gbp = Some(value),

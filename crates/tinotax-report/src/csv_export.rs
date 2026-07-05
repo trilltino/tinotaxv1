@@ -1,3 +1,7 @@
+//! Normalised transaction CSV export.
+//!
+//! This report is a spreadsheet-friendly projection of normalised events. It
+//! is not the review override surface; that lives in `tinotax-review`.
 use anyhow::{Context, Result};
 use tinotax_core::NormalisedEvent;
 use tinotax_store::{read_jsonl, ProjectPaths};

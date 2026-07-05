@@ -1,3 +1,8 @@
+//! Orchestrates project diagnostics from a checked project directory.
+//!
+//! This module loads the project context, calls the diagnostics crate, writes
+//! reports under `out/`, and prints a compact command-line summary.
+
 use anyhow::Result;
 use tinotax_diagnostics::Diagnostics;
 

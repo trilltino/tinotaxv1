@@ -1,3 +1,7 @@
+//! Project activity summary diagnostics.
+//!
+//! This module writes compact counts by source, chain, event type, and review
+//! status to help operators understand what was ingested.
 use std::collections::BTreeMap;
 
 use anyhow::{Context, Result};

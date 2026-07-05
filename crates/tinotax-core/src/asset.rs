@@ -1,3 +1,8 @@
+//! Asset and token identity primitives.
+//!
+//! The current model stores the symbol plus optional chain/contract metadata.
+//! Future canonical asset grouping should build on these fields rather than
+//! pooling by symbol alone.
 use serde::{Deserialize, Serialize};
 
 /// An asset as observed on-chain. Identity is (chain, contract) for tokens

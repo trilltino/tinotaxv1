@@ -1,3 +1,7 @@
+//! HTTP client wrapper for connector crates.
+//!
+//! The wrapper centralises user-agent, timeout, retries, and status handling so
+//! provider fetchers stay focused on endpoint-specific pagination.
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};

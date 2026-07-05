@@ -1,3 +1,7 @@
+//! Duplicate event detection.
+//!
+//! Event IDs are expected to be deterministic and unique. Duplicate reporting
+//! catches normalisation regressions before review or tax steps consume them.
 use std::collections::HashSet;
 
 use tinotax_core::NormalisedEvent;

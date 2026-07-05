@@ -1,3 +1,7 @@
+//! Shared domain error type.
+//!
+//! Most crates use `anyhow` at orchestration boundaries, but this enum remains
+//! available for domain-level failures that need stable categorisation.
 use thiserror::Error;
 
 #[derive(Debug, Error)]

@@ -6,6 +6,8 @@ use anyhow::Result;
 /// `import-cex`: copy + hash the original CSVs, normalise them into events.
 pub fn import_cex(project: &str) -> Result<()> {
     let (paths, config) = crate::open_project(project)?;
+    // Importing CEX data is evidence-sensitive: the CEX crate copies and
+    // hashes the original CSVs before emitting any normalised events.
     let reports = tinotax_cex::import_all(&paths, &config)?;
     for r in &reports {
         println!(
@@ -41,6 +43,8 @@ pub fn export_review_all(project: &str) -> Result<u64> {
 /// `ledger build`: normalised events + review overrides → reviewed ledger.
 pub fn ledger_build(project: &str) -> Result<()> {
     let (paths, _) = crate::open_project(project)?;
+    // This is the review boundary: normalised machine events plus append-only
+    // human overrides become the reviewed ledger consumed by pricing/tax.
     let summary = tinotax_ledger::build_ledger(&paths)?;
     println!(
         "built reviewed ledger: {} events ({} reviewed, {} still flagged, {} ignored, {} unknown)",
@@ -63,6 +67,8 @@ pub fn ledger_build(project: &str) -> Result<()> {
 /// `ledger price`: reviewed ledger + price book → priced ledger.
 pub fn ledger_price(project: &str) -> Result<()> {
     let (paths, _) = crate::open_project(project)?;
+    // Pricing is deliberately separate from ledger build so missing prices can
+    // be reviewed and imported without rebuilding source classifications.
     let summary = tinotax_pricing::price_ledger(&paths)?;
     println!(
         "priced ledger: {} rows — {} valued from the price book, {} already valued by review, {} nothing to price, {} still missing",
@@ -122,6 +128,8 @@ pub fn calculate_uk(project: &str, tax_year: &str, allow_unpriced: bool) -> Resu
     let (paths, _) = crate::open_project(project)?;
     let year = tinotax_tax_uk::TaxYear::parse(tax_year)?;
     let events = tinotax_pricing::load_priced_ledger(&paths)?;
+    // Opening pools are the accountant/user-supplied bridge for holdings that
+    // pre-date the imported data window. Without them, early disposals fail.
     let opening_pools = tinotax_tax_uk::load_opening_pools(&paths.opening_pools_file())?;
     let calc = tinotax_tax_uk::calculate(&events, &opening_pools, year, allow_unpriced)?;
     let dir = tinotax_tax_uk::write_reports(&paths, &calc)?;
@@ -152,6 +160,8 @@ pub fn calculate_uk(project: &str, tax_year: &str, allow_unpriced: bool) -> Resu
 pub fn pack_hmrc(project: &str, tax_year: &str) -> Result<()> {
     let (paths, config) = crate::open_project(project)?;
     let year = tinotax_tax_uk::TaxYear::parse(tax_year)?;
+    // The evidence pack is a copied deliverable: it gathers reports and
+    // provenance into one folder without changing the calculation inputs.
     let dir = tinotax_evidence::build_pack(&paths, &config, &year.label())?;
     println!("evidence pack ready: {dir}");
     println!("review hmrc_questions_draft.md and questionnaire.toml before sending anything on.");

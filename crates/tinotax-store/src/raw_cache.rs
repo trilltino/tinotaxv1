@@ -1,6 +1,13 @@
+//! Immutable raw endpoint cache.
+//!
+//! The cache writes provider pages, cursor state, and page listings for one
+//! `raw/{chain}/{wallet}/{endpoint}/` directory. Page writes use create-new
+//! semantics so source evidence cannot be silently overwritten.
 use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
+use std::fs::OpenOptions;
+use std::io::{ErrorKind, Write};
 
 use crate::project_dirs::ProjectPaths;
 
@@ -71,11 +78,26 @@ impl EndpointCache {
         let bytes = serde_json::to_vec_pretty(body).context("serialising raw page")?;
         let hash = blake3::hash(&bytes).to_hex().to_string();
         let path = self.page_path(page);
-        std::fs::write(&path, &bytes).with_context(|| format!("writing {path}"))?;
+        // `create_new(true)` is the evidence invariant: an already-captured
+        // raw page can only be reused by resume logic, never overwritten by a
+        // later provider response.
+        let mut file = match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(file) => file,
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => {
+                anyhow::bail!(
+                    "raw page already exists at {path}; use --resume or create a new fetch run"
+                );
+            }
+            Err(err) => return Err(err).with_context(|| format!("creating raw page {path}")),
+        };
+        file.write_all(&bytes)
+            .with_context(|| format!("writing raw page {path}"))?;
         let rel = path
             .strip_prefix(&self.project_root)
             .map(|p| p.as_str().replace('\\', "/"))
             .unwrap_or_else(|_| path.as_str().replace('\\', "/"));
+        // Store manifest paths relative to the project root so evidence packs
+        // are relocatable across machines.
         Ok((rel, hash))
     }
 
@@ -143,5 +165,24 @@ mod tests {
         let pages = cache.list_pages().unwrap();
         assert_eq!(pages.len(), 1);
         assert_eq!(pages[0].0, 1);
+    }
+
+    #[test]
+    fn refuses_to_overwrite_existing_page() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+        let paths = ProjectPaths::new(root);
+        paths.init().unwrap();
+
+        let cache = EndpointCache::open(&paths, "near", "foxboss.near", "transactions").unwrap();
+        cache
+            .write_page(1, &serde_json::json!({"first": true}))
+            .unwrap();
+
+        let err = cache
+            .write_page(1, &serde_json::json!({"first": false}))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("raw page already exists"));
     }
 }

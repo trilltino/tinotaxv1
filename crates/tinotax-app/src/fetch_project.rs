@@ -1,3 +1,9 @@
+//! Fetch orchestration for configured wallet sources.
+//!
+//! This module loads provider config, constructs connector implementations,
+//! and asks each connector to persist raw pages into the immutable project
+//! cache. It does not interpret the fetched JSON.
+
 use anyhow::Result;
 use tinotax_config::{ProviderEntry, ProviderKind};
 use tinotax_connectors::{make_fetcher, FetchContext, FetchReport, ProviderSpec};

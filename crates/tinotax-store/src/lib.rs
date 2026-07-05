@@ -1,3 +1,7 @@
+//! Project storage primitives for TinoTax.
+//!
+//! This crate owns project paths, raw cache writes, manifests, hashing, and
+//! JSONL helpers. It deliberately avoids domain interpretation.
 pub mod jsonl;
 pub mod manifest;
 pub mod project_dirs;

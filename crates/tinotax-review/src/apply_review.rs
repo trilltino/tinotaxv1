@@ -48,6 +48,8 @@ pub fn apply_review(paths: &ProjectPaths, edited_csv: &Utf8Path) -> Result<u64> 
     if action_col.is_none() && tax_type_col.is_none() {
         bail!("{edited_csv} must have a `user_action` or `user_tax_type` column");
     }
+    // All user-editable columns are optional. Blank cells mean "keep the
+    // machine value/current decision"; filled cells become an override record.
     let asset_col = col("user_asset_symbol");
     let quantity_col = col("user_quantity");
     let proceeds_col = col("user_proceeds_gbp");
@@ -78,6 +80,8 @@ pub fn apply_review(paths: &ProjectPaths, edited_csv: &Utf8Path) -> Result<u64> 
 
         let event_id = record.get(id_col).unwrap_or("").trim();
 
+        // Parse enum-like columns before building the candidate so invalid
+        // spreadsheet text fails with the same row number the user sees.
         let user_action = cell(action_col)
             .map(|text| {
                 ReviewAction::from_str(text)
@@ -118,6 +122,8 @@ pub fn apply_review(paths: &ProjectPaths, edited_csv: &Utf8Path) -> Result<u64> 
             continue; // untouched row
         }
         if event_id.is_empty() {
+            // A blank ID cannot be safely applied, but warning keeps accidental
+            // notes below the table from killing an otherwise valid import.
             warn!(row, "skipping row with edits but no event_id");
             continue;
         }
@@ -136,6 +142,8 @@ pub fn apply_review(paths: &ProjectPaths, edited_csv: &Utf8Path) -> Result<u64> 
     }
 
     std::fs::create_dir_all(paths.staging())?;
+    // Append only after every row has validated. This avoids half-applying a
+    // spreadsheet where a later row contains an invalid value.
     let mut writer = JsonlWriter::append(&paths.overrides_jsonl())?;
     for o in &overrides {
         writer.write(o)?;

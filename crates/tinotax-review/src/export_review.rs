@@ -1,3 +1,7 @@
+//! Manual-review subset export.
+//!
+//! This module writes only rows that are uncertain or explicitly require
+//! attention, complementing the full review export in `export_all`.
 use anyhow::{Context, Result};
 use tinotax_core::{EventType, NormalisedEvent};
 use tinotax_store::{read_jsonl, ProjectPaths};

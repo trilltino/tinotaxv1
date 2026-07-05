@@ -1,3 +1,7 @@
+//! Deterministic normalised event ID generation.
+//!
+//! IDs are derived from stable source fields rather than runtime state so
+//! review decisions can be re-applied after regeneration from raw cache.
 /// Deterministic event identity: re-running the import over the same raw
 /// data yields the same ID, so reviews and downstream state survive reruns.
 ///

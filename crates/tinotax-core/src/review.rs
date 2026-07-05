@@ -1,3 +1,7 @@
+//! Human review override model.
+//!
+//! Review overrides are append-only records that capture spreadsheet edits
+//! without mutating raw or normalised source events.
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 

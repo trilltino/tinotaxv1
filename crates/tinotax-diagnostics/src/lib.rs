@@ -1,3 +1,7 @@
+//! Diagnostics for normalised project data.
+//!
+//! The crate writes deterministic data-quality reports from
+//! `staging/normalised_events.jsonl` without mutating any project data.
 pub mod assets;
 pub mod duplicates;
 pub mod review_flags;

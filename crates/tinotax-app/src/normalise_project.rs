@@ -1,3 +1,9 @@
+//! Normalisation command orchestration.
+//!
+//! The normalise crate owns provider-specific event conversion. This module
+//! loads the checked project, passes configured wallets through, and reports
+//! how many events were written.
+
 use anyhow::Result;
 use tinotax_normalise::NormaliseSummary;
 

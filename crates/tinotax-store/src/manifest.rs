@@ -1,3 +1,7 @@
+//! Raw and output manifest structures.
+//!
+//! Manifests record paths, hashes, source IDs, and timestamps so source data
+//! and generated outputs can be audited later.
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};

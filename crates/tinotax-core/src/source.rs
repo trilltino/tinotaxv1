@@ -1,3 +1,7 @@
+//! Source-reference metadata for audit trails.
+//!
+//! These types keep every event linked back to the raw file, provider, and
+//! source-specific location that produced it.
 use serde::{Deserialize, Serialize};
 
 /// A wallet to ingest, as declared in the project config.

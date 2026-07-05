@@ -1,3 +1,7 @@
+//! Provider response models shared by connector and normalisation code.
+//!
+//! These structs are intentionally close to API JSON. Domain-level meaning is
+//! assigned later in `tinotax-normalise`.
 pub mod blockscout;
 pub mod nearblocks;
 

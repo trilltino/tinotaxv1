@@ -85,6 +85,8 @@ fn aggregate(events: &[TaxLedgerEvent]) -> Result<BTreeMap<String, AssetDays>, T
         }
         let day = day_of_timestamp(&event.timestamp)
             .map_err(|_| TaxError::InvalidTimestamp(event.timestamp.clone()))?;
+        // Current v1 pools by uppercase symbol. The roadmap tracks canonical
+        // AssetId pooling so same-symbol contracts cannot accidentally merge.
         let asset = event.asset_symbol.to_ascii_uppercase();
         let days = by_asset.entry(asset).or_default();
         if t.is_pool_entry() {
@@ -132,9 +134,13 @@ pub fn calculate(
     tax_year: TaxYear,
     allow_unpriced: bool,
 ) -> Result<UkTaxCalculation, TaxError> {
+    // Validation happens before matching so unresolved or unpriced rows cannot
+    // leak into pool math unless the caller explicitly chose exclusion mode.
     let (included, unresolved) = validate(events, allow_unpriced)?;
     let mut by_asset = aggregate(&included)?;
 
+    // HMRC matching order matters: same-day and 30-day matches consume
+    // acquisitions before remaining quantities enter the Section 104 pool.
     for days in by_asset.values_mut() {
         same_day::match_same_day(days);
         thirty_day::match_thirty_day(days);

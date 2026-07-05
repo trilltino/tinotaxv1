@@ -1,3 +1,8 @@
+//! Asset movement diagnostics.
+//!
+//! This module summarises observed asset quantities and directions so users
+//! can spot unexpected tokens, missing rows, or one-sided activity before tax
+//! calculation.
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};

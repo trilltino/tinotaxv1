@@ -1,3 +1,7 @@
+//! NearBlocks wallet fetcher for NEAR account transaction pages.
+//!
+//! The fetcher supports anonymous and API-key modes, uses conservative rate
+//! limits, and persists raw pages plus cursors for resumable evidence capture.
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use tinotax_core::WalletSource;

@@ -1,3 +1,8 @@
+//! Shared domain types for the TinoTax workspace.
+//!
+//! This crate owns stable records and helpers used across ingestion, review,
+//! ledger, pricing, tax, and evidence crates. It deliberately avoids filesystem
+//! and network IO.
 pub mod amount;
 pub mod asset;
 pub mod chain;

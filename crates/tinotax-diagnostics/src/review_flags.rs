@@ -1,3 +1,7 @@
+//! Review-risk classification for normalised events.
+//!
+//! The report highlights rows that need human judgement, such as unknown
+//! contract calls or low-confidence classifications.
 use serde::{Deserialize, Serialize};
 use tinotax_core::{EventType, NormalisedEvent};
 

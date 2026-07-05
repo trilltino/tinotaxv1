@@ -1,3 +1,7 @@
+//! Normalised event JSON export.
+//!
+//! The JSON export is a human/debugging view over the JSONL staging file and
+//! remains regenerable from normalised events.
 use anyhow::{Context, Result};
 use tinotax_core::NormalisedEvent;
 use tinotax_store::{read_jsonl, ProjectPaths};

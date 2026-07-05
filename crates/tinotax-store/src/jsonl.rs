@@ -1,3 +1,7 @@
+//! JSON Lines storage helpers.
+//!
+//! Several pipeline stages append or regenerate newline-delimited JSON. These
+//! helpers centralise writer setup and typed reads.
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::marker::PhantomData;

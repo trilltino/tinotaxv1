@@ -1,3 +1,7 @@
+//! Conservative machine classification hints.
+//!
+//! Classifiers should prefer reviewable uncertainty over aggressive tax
+//! assumptions. Human review can later promote or correct the suggested type.
 use tinotax_core::{Confidence, EventType};
 
 /// Result of the deliberately shallow v1 classifier. We do not decode DeFi;

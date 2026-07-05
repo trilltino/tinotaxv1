@@ -1,3 +1,8 @@
+//! External provider connectors for wallet raw-data ingestion.
+//!
+//! The crate exposes provider factories and shared fetcher traits. It writes
+//! raw evidence through `tinotax-store` but leaves interpretation to
+//! `tinotax-normalise`.
 pub mod blockscout;
 pub mod fetcher;
 pub mod http;

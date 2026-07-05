@@ -1,3 +1,8 @@
+//! Decimal and integer scaling helpers for crypto quantities.
+//!
+//! Money and token amounts must avoid binary floating point. These helpers
+//! convert raw integer strings such as wei or yoctoNEAR into `Decimal` values
+//! while preserving deterministic rounding behaviour.
 use rust_decimal::Decimal;
 
 use crate::error::CoreError;

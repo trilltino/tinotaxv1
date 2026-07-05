@@ -41,6 +41,8 @@ fn read_pages(
     for (page_num, path) in cache.list_pages()? {
         let text = std::fs::read_to_string(&path).with_context(|| format!("reading {path}"))?;
         let page: Page = serde_json::from_str(&text).with_context(|| format!("parsing {path}"))?;
+        // Keep both the page number and project-relative path so each emitted
+        // event can be traced back to exact raw evidence.
         pages.push((page_num, paths.relative(&path), page));
     }
     Ok(pages)
@@ -100,6 +102,8 @@ fn normalise_token_transfers(
                 .map(|h| h.to_ascii_lowercase());
             let direction = direction_relative_to(&wallet_addr, from.as_deref(), to.as_deref());
             if direction == Direction::Unknown {
+                // Direction can be unknown when provider data is incomplete or
+                // neither side matches the wallet; keep the event reviewable.
                 reasons.push("token_transfer_direction_unknown".to_string());
             }
 
@@ -402,6 +406,8 @@ fn normalise_transactions(
             // native value and no token transfer already captured for this tx.
             let has_token_movement = token_tx_hashes.contains(&tx_hash);
             if !has_value && !has_token_movement && !failed {
+                // Opaque calls are preserved as zero-amount review rows so
+                // unknown DeFi or approvals do not vanish from the audit trail.
                 let class = classify_contract_call(tx.method.as_deref());
                 let direction = if is_sender {
                     Direction::Out

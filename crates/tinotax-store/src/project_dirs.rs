@@ -1,3 +1,7 @@
+//! Canonical project folder layout.
+//!
+//! Centralising path construction prevents crates from inventing slightly
+//! different filenames for the same pipeline artifact.
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 

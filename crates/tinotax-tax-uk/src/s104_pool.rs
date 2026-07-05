@@ -81,6 +81,8 @@ pub(crate) fn walk_pools(
         let mut opening_state: Option<(Decimal, Decimal)> = None;
         let mut closing_state: Option<(Decimal, Decimal)> = None;
         for day in all_days {
+            // Capture the requested year's opening/closing state while still
+            // walking the full historical timeline for correct pool carryover.
             if opening_state.is_none() && day >= year_start {
                 opening_state = Some((pool.quantity, pool.cost));
             }
@@ -133,6 +135,8 @@ pub(crate) fn walk_pools(
 
             if let Some(acquisition) = days.acquisitions.get(&day) {
                 if !acquisition.remaining.is_zero() {
+                    // Only the part left after same-day and 30-day matching is
+                    // admitted to the pool.
                     let cost = acquisition.cost_of(acquisition.remaining);
                     pool.quantity += acquisition.remaining;
                     pool.cost += cost;

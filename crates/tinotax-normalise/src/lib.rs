@@ -1,3 +1,8 @@
+//! Raw wallet normalisation orchestration.
+//!
+//! This crate reads immutable provider pages and writes deterministic
+//! `NormalisedEvent` records. It does not apply user review decisions or tax
+//! calculations.
 pub mod classify;
 pub mod dedupe;
 pub mod event_id;

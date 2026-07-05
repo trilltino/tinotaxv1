@@ -1,3 +1,8 @@
+//! Normalised event model.
+//!
+//! `NormalisedEvent` is the bridge between provider-specific raw pages and the
+//! human review workflow. It keeps source references and confidence flags so
+//! uncertain activity remains visible.
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 

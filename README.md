@@ -37,34 +37,37 @@ raw data → normalised events → review all data → apply edits
 
 ## Quick start
 
+> **Never commit client data.** Real `wallets.toml` files, CEX exports,
+> imported raw API responses, tax outputs, and evidence packs contain private
+> financial data. Keep them in gitignored project folders only.
+
 ```bash
 cp wallets.example.toml wallets.toml   # then fill in real addresses (gitignored)
-cargo run -p tinotax-cli -- doctor     # config + provider connectivity checks
-cargo run -p tinotax-cli -- demo --config wallets.toml --out ./demo-data
+just doctor                            # config + provider connectivity checks
+just startup-demo                      # demo ingestion with --resume
 ```
 
 ## Full command flow
 
 ```bash
-tinotax project init --config wallets.toml --out ./fox-project
-tinotax fetch --project ./fox-project --resume
-tinotax import-cex --project ./fox-project
-tinotax normalise --project ./fox-project
-tinotax diagnose --project ./fox-project
+just init
+just fetch-resume
+just import-cex
+just normalise
+just diagnose
 
-tinotax review export-all --project ./fox-project
+just review-export
 # … edit out/review_all_transactions.csv in a spreadsheet …
-tinotax review apply --project ./fox-project \
-  --file ./fox-project/out/review_all_transactions_edited.csv
+just review-apply ./fox-project/out/review_all_transactions_edited.csv
 
-tinotax ledger build --project ./fox-project
-tinotax prices missing --project ./fox-project
-tinotax prices import --project ./fox-project --file ./manual_prices.csv
-tinotax prices fetch --project ./fox-project --provider coingecko   # optional
-tinotax ledger price --project ./fox-project
+just ledger-build
+just prices-missing
+just prices-import ./manual_prices.csv
+just prices-fetch        # optional, defaults to coingecko
+just ledger-price
 
-tinotax calculate uk --project ./fox-project --tax-year 2024-2025
-tinotax pack hmrc --project ./fox-project --tax-year 2024-2025
+just calculate 2024-2025
+just pack 2024-2025
 ```
 
 ## Outputs
@@ -121,11 +124,15 @@ and re-run.
 ## Development
 
 ```bash
-cargo fmt --all
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-cargo doc --workspace --no-deps
+just fmt
+just clippy
+just test
+just doc
 ```
+
+Use `just --list` to see all terminal startup and development shortcuts. On
+Windows the recipes fall back to `%USERPROFILE%\.cargo\bin\cargo.exe`; set
+`CARGO` if you need a different cargo executable.
 
 Docs: [architecture](docs/architecture.md) · [commands](docs/commands.md) ·
 [data model](docs/data_model.md) · [review workflow](docs/review_workflow.md) ·

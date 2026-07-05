@@ -1,3 +1,8 @@
+//! Blockscout v2 wallet fetcher.
+//!
+//! The fetcher stores raw address pages exactly as returned by Blockscout and
+//! persists a cursor after each page so interrupted fetches can resume without
+//! overwriting evidence.
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use tinotax_core::WalletSource;

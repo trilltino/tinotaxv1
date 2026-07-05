@@ -1,3 +1,9 @@
+//! Environment and provider health checks for local development.
+//!
+//! `doctor` is safe to run before a project exists. It reports the CLI
+//! version, optional config validation, provider reachability, and whether the
+//! expected API-key environment variables are present.
+
 use anyhow::Result;
 use camino::Utf8PathBuf;
 use tinotax_config::{ProjectConfig, ProviderKind};

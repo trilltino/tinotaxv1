@@ -94,6 +94,9 @@ pub fn normalise_near_wallet(
                     .as_ref()
                     .and_then(|agg| agg.deposit.as_ref()),
             );
+            // NearBlocks exposes an aggregate deposit for the transaction, so
+            // v1 treats the visible native value as one movement and leaves
+            // deeper receipt/action reconstruction to later enrichment.
             let (amount, raw_amount) = match raw_deposit {
                 Some(raw) if raw != "0" => match ScaledAmount::from_raw(&raw, native_decimals) {
                     Ok(scaled) => {

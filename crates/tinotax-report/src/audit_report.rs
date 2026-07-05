@@ -1,3 +1,7 @@
+//! Audit manifest generation for project evidence.
+//!
+//! The manifest hashes raw evidence manifests and key output files so a later
+//! reviewer can verify that reports correspond to the captured source data.
 use anyhow::{Context, Result};
 use tinotax_store::manifest::collect_raw_manifests;
 use tinotax_store::{hash_file, AuditManifest, OutputFileEntry, ProjectPaths};

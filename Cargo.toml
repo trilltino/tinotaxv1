@@ -1,21 +1,13 @@
 [workspace]
 resolver = "2"
 members = [
-  "crates/tinotax-core",
-  "crates/tinotax-config",
-  "crates/tinotax-connectors",
-  "crates/tinotax-store",
-  "crates/tinotax-normalise",
-  "crates/tinotax-diagnostics",
-  "crates/tinotax-review",
-  "crates/tinotax-ledger",
-  "crates/tinotax-cex",
-  "crates/tinotax-pricing",
-  "crates/tinotax-report",
-  "crates/tinotax-tax-uk",
-  "crates/tinotax-evidence",
-  "crates/tinotax-app",
-  "crates/tinotax-cli",
+  "crates/foundation/*",
+  "crates/ingest/*",
+  "crates/review/*",
+  "crates/valuation/*",
+  "crates/output/*",
+  "crates/interface/*",
+  "apps/desktop/src-tauri",
 ]
 
 [workspace.package]
@@ -24,22 +16,33 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/trilltino/tinotax"
 
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+unwrap_used = "deny"
+
 [workspace.dependencies]
 # Internal crates
-tinotax-core = { path = "crates/tinotax-core" }
-tinotax-config = { path = "crates/tinotax-config" }
-tinotax-connectors = { path = "crates/tinotax-connectors" }
-tinotax-store = { path = "crates/tinotax-store" }
-tinotax-normalise = { path = "crates/tinotax-normalise" }
-tinotax-diagnostics = { path = "crates/tinotax-diagnostics" }
-tinotax-review = { path = "crates/tinotax-review" }
-tinotax-ledger = { path = "crates/tinotax-ledger" }
-tinotax-cex = { path = "crates/tinotax-cex" }
-tinotax-pricing = { path = "crates/tinotax-pricing" }
-tinotax-report = { path = "crates/tinotax-report" }
-tinotax-tax-uk = { path = "crates/tinotax-tax-uk" }
-tinotax-evidence = { path = "crates/tinotax-evidence" }
-tinotax-app = { path = "crates/tinotax-app" }
+tinotax-core = { path = "crates/foundation/tinotax-core" }
+tinotax-config = { path = "crates/foundation/tinotax-config" }
+tinotax-store = { path = "crates/foundation/tinotax-store" }
+tinotax-connectors = { path = "crates/ingest/tinotax-connectors" }
+tinotax-cex = { path = "crates/ingest/tinotax-cex" }
+tinotax-normalise = { path = "crates/ingest/tinotax-normalise" }
+tinotax-diagnostics = { path = "crates/review/tinotax-diagnostics" }
+tinotax-review = { path = "crates/review/tinotax-review" }
+tinotax-ledger = { path = "crates/review/tinotax-ledger" }
+tinotax-pricing = { path = "crates/valuation/tinotax-pricing" }
+tinotax-tax-uk = { path = "crates/valuation/tinotax-tax-uk" }
+tinotax-report = { path = "crates/output/tinotax-report" }
+tinotax-evidence = { path = "crates/output/tinotax-evidence" }
+tinotax-app = { path = "crates/interface/tinotax-app" }
 
 # Errors
 anyhow = "1"
@@ -54,7 +57,7 @@ toml = "0.9"
 
 # CLI + async runtime
 clap = { version = "4", features = ["derive", "env"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "time", "sync"] }
 
 # HTTP
 reqwest = { version = "0.12", default-features = false, features = [
@@ -94,6 +97,13 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 indicatif = "0.17"
 tabled = "0.17"
+
+# Desktop shell
+tauri = "2"
+tauri-build = "2"
+tauri-plugin-wdio-webdriver = "1"
+tauri-plugin-dialog = { version = "2", default-features = false }
+open = "5"
 
 # Dev / test (referenced from each crate's [dev-dependencies])
 assert_cmd = "2"

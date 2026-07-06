@@ -2,13 +2,20 @@
 /target/
 **/*.rs.bk
 
+# Frontend / desktop app
+/apps/desktop/node_modules/
+/apps/desktop/dist/
+/apps/desktop/.vite/
+
 # Runtime project folders (regenerable from raw, but raw contains client data — never commit)
 /demo-data/
 /fox-project/
+/fox-project-lisk/
 *.log
 
 # Real client wallet addresses / sources — copy wallets.example.toml instead
 /wallets.toml
+/wallets.lisk.toml
 /opening_pools.toml
 /imports/
 

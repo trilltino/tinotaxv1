@@ -12,6 +12,22 @@ ledger against it.
    `prices import` (manual CSV) and `prices fetch` (CoinGecko daily
    history; built-in symbol→id table, unknown symbols reported, gentle
    rate limiting, resumable).
+
+   For production runs, set one CoinGecko key before fetching:
+
+   ```bash
+   export COINGECKO_API_KEY=your_demo_or_public_paid_key
+   # or, for Pro:
+   export COINGECKO_PRO_API_KEY=your_pro_key
+   ```
+
+   PowerShell:
+
+   ```powershell
+   $env:COINGECKO_API_KEY="your_demo_or_public_paid_key"
+   # or, for Pro:
+   $env:COINGECKO_PRO_API_KEY="your_pro_key"
+   ```
 3. **CEX price hints** (`staging/cex_price_hints.jsonl`) — GBP spot prices
    stated in exchange exports, captured during `import-cex`.
 

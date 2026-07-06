@@ -26,4 +26,5 @@ Use `wallets.example.toml` for placeholders only. Real project folders such as
 
 Provider keys must be supplied through environment variables such as
 `NEARBLOCKS_API_KEY`, `BLOCKSCOUT_API_KEY`, `PIKESPEAK_API_KEY`, and
-`COINGECKO_API_KEY`. Do not place keys in TOML files committed to git.
+`COINGECKO_API_KEY` / `COINGECKO_PRO_API_KEY`. Do not place keys in TOML
+files committed to git.

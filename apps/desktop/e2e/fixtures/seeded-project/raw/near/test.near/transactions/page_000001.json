@@ -1,0 +1,24 @@
+{
+  "txns": [
+    {
+      "transaction_hash": "e2e_buy_tx",
+      "block_timestamp": "1714557600000000000",
+      "signer_account_id": "payer.near",
+      "receiver_account_id": "test.near",
+      "actions": [{ "action": "Transfer" }],
+      "actions_agg": { "deposit": "1000000000000000000000000" },
+      "outcomes": { "status": true },
+      "block": { "block_height": 1 }
+    },
+    {
+      "transaction_hash": "e2e_sell_tx",
+      "block_timestamp": "1717236000000000000",
+      "signer_account_id": "test.near",
+      "receiver_account_id": "buyer.near",
+      "actions": [{ "action": "Transfer" }],
+      "actions_agg": { "deposit": "1000000000000000000000000" },
+      "outcomes": { "status": true },
+      "block": { "block_height": 2 }
+    }
+  ]
+}

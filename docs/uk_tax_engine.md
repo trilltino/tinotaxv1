@@ -64,7 +64,7 @@ as_of = "2017-01-01T00:00:00Z"
 
 ## Tests
 
-`crates/tinotax-tax-uk/src/lib.rs` covers: buy/sell, partial disposal,
+`crates/valuation/tinotax-tax-uk/src/lib.rs` covers: buy/sell, partial disposal,
 same-day, 30-day (inside and outside the window), pool averaging, swaps,
 staking-then-sale, airdrop-then-sale, fee-only transactions, disposal
 before acquisition, opening pools, negative-pool prevention, unresolved

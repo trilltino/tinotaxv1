@@ -12,13 +12,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.96.1
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - run: cargo metadata --locked --format-version 1 > target/cargo-metadata.json
+      - name: Static policy scan
+        run: |
+          if rg -n '\.unwrap\(\)|\.expect\(|panic!\(|todo!\(|unimplemented!\(|unreachable!\(|unwrap_err\(|expect_err\(|unwrap_none\(|expect_none\(' crates apps/desktop/src-tauri -g '*.rs'; then
+            echo "::error::first-party Rust contains banned unchecked extraction or panic shortcut"
+            exit 1
+          fi
+          if rg -n 'unsafe\s*\{|unsafe fn|unsafe impl' crates apps/desktop/src-tauri -g '*.rs'; then
+            echo "::error::first-party Rust contains unsafe code"
+            exit 1
+          fi
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
-      - run: cargo doc --workspace --no-deps
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - run: cargo check --workspace --all-targets --all-features --locked
+      - run: cargo test --workspace --all-targets --all-features --locked
+      - run: cargo doc --workspace --all-features --no-deps --locked
         env:
           RUSTDOCFLAGS: -D warnings
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
+      - run: cargo install cargo-deny --locked
+      - run: cargo deny check

@@ -1,0 +1,36 @@
+[package]
+name = "tinotax-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+tinotax-core = { workspace = true }
+tinotax-config = { workspace = true }
+tinotax-connectors = { workspace = true }
+tinotax-store = { workspace = true }
+tinotax-normalise = { workspace = true }
+tinotax-diagnostics = { workspace = true }
+tinotax-review = { workspace = true }
+tinotax-ledger = { workspace = true }
+tinotax-cex = { workspace = true }
+tinotax-pricing = { workspace = true }
+tinotax-report = { workspace = true }
+tinotax-tax-uk = { workspace = true }
+tinotax-evidence = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+jiff = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+camino = { workspace = true }
+serde_json = { workspace = true }
+walkdir = { workspace = true }
+rust_decimal = { workspace = true }
+csv = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -1,0 +1,17 @@
+[package]
+name = "tinotax-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+# Pure domain types only. Must not depend on reqwest, csv, SQLite, provider APIs, or CLI code.
+[dependencies]
+serde = { workspace = true }
+rust_decimal = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

@@ -51,10 +51,13 @@ just startup-demo                      # demo ingestion with --resume
 
 ```bash
 just init
+just project-status
+just project-paths
 just fetch-resume
 just import-cex
 just normalise
 just diagnose
+just readiness
 
 just review-export
 # … edit out/review_all_transactions.csv in a spreadsheet …
@@ -62,13 +65,41 @@ just review-apply ./fox-project/out/review_all_transactions_edited.csv
 
 just ledger-build
 just prices-missing
+export COINGECKO_API_KEY=your_key   # PowerShell: $env:COINGECKO_API_KEY="your_key"
 just prices-import ./manual_prices.csv
 just prices-fetch        # optional, defaults to coingecko
 just ledger-price
 
 just calculate 2024-2025
 just pack 2024-2025
+just readiness
 ```
+
+The same flow can be driven from grouped project helpers:
+
+```bash
+tinotax project workflow startup --config wallets.toml --project ./fox-project --resume
+tinotax project workflow refresh-review --project ./fox-project
+tinotax project workflow finalize-year --project ./fox-project --tax-year 2024-2025
+tinotax project clean --project ./fox-project --target logs
+tinotax project clean --project ./fox-project --target logs --confirm
+```
+
+## Desktop app (dev)
+
+There is now a Windows-first Tauri v2 desktop cockpit in `apps/desktop/`.
+It keeps the CLI as the canonical automation surface, but calls the same Rust
+app/core orchestration directly instead of shelling out.
+
+```bash
+just desktop-install
+just desktop-dev
+```
+
+The app opens or creates local projects, shows project status and paths, edits
+append-only review overrides, runs startup/refresh/finalize helpers, and
+performs dry-run-first cleanup. Local checks are available with
+`just desktop-test`; the seeded WebDriver flow is `just desktop-e2e`.
 
 ## Outputs
 
@@ -125,6 +156,7 @@ and re-run.
 
 ```bash
 just fmt
+just policy-scan
 just clippy
 just test
 just doc
@@ -134,10 +166,20 @@ Use `just --list` to see all terminal startup and development shortcuts. On
 Windows the recipes fall back to `%USERPROFILE%\.cargo\bin\cargo.exe`; set
 `CARGO` if you need a different cargo executable.
 
+`just production-check` is the full local gate. It forbids first-party unsafe
+Rust, unchecked `.unwrap()`/`.expect()`/`.unwrap_err()`/`.expect_err()`, and direct panic-style
+shortcuts before running fmt, clippy, check, tests, docs, audit, and deny.
+The deny gate is Windows-targeted for the v1 desktop/CLI release surface; see
+`docs/dependency-policy.md` for accepted license exceptions and tracked Tauri
+transitive advisories.
+
 Docs: [architecture](docs/architecture.md) · [commands](docs/commands.md) ·
 [data model](docs/data_model.md) · [review workflow](docs/review_workflow.md) ·
 [CEX imports](docs/cex_imports.md) · [pricing](docs/pricing.md) ·
 [UK tax engine](docs/uk_tax_engine.md) ·
 [evidence pack](docs/hmrc_evidence_pack.md) ·
+[analysis/visuals](docs/analysis_and_visuals.md) ·
+[production gate](docs/production_gate.md) ·
+[Rust readiness](docs/RUST_PRODUCTION_READINESS_CHECKLIST.md) ·
 [assumptions](docs/assumptions_and_limitations.md) ·
 [accountant review](docs/accountant_review.md)

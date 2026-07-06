@@ -1,0 +1,5 @@
+[term]
+color = "always"
+
+[net]
+retry = 3

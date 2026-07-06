@@ -1,0 +1,22 @@
+[package]
+name = "tinotax-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "tinotax"
+path = "src/main.rs"
+
+[dependencies]
+tinotax-app = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+assert_cmd = { workspace = true }

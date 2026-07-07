@@ -48,6 +48,34 @@ pub struct Fee {
     pub value: Option<String>,
 }
 
+/// One internal call frame from `/addresses/{hash}/internal-transactions`.
+/// Blockscout returns only sub-calls that touch the address — the top-level
+/// call is reported by the `transactions` endpoint, so value seen here is
+/// never a duplicate of the transaction's own `value`.
+#[derive(Debug, Deserialize)]
+pub struct InternalTransaction {
+    #[serde(default, alias = "tx_hash")]
+    pub transaction_hash: Option<String>,
+    /// Position of the call frame within its transaction.
+    #[serde(default)]
+    pub index: Option<serde_json::Value>,
+    #[serde(default)]
+    pub block_number: Option<serde_json::Value>,
+    #[serde(default)]
+    pub timestamp: Option<String>,
+    #[serde(default)]
+    pub from: Option<AddressField>,
+    #[serde(default)]
+    pub to: Option<AddressField>,
+    /// Native value in wei, as a string.
+    #[serde(default)]
+    pub value: Option<String>,
+    #[serde(default)]
+    pub success: Option<bool>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct TokenTransfer {
     #[serde(default, alias = "tx_hash")]

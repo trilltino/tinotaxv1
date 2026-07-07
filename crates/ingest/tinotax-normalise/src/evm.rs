@@ -1,11 +1,14 @@
-//! Blockscout-style EVM normalisation: native transfers, gas fees, token
-//! transfers, and review-flagged contract calls. No DeFi decoding in v1.
+//! Blockscout-style EVM normalisation: native transfers (top-level and
+//! internal call frames), gas fees, token transfers, and review-flagged
+//! contract calls. No DeFi decoding in v1.
 
 use std::collections::HashSet;
 
 use anyhow::{Context, Result};
 use rust_decimal::Decimal;
-use tinotax_connectors::models::blockscout::{Page, TokenTransfer, Transaction};
+use tinotax_connectors::models::blockscout::{
+    InternalTransaction, Page, TokenTransfer, Transaction,
+};
 use tinotax_connectors::models::value_as_u64;
 use tinotax_core::{
     Chain, Confidence, Direction, EventType, NormalisedEvent, ScaledAmount, SourceKind, SourceRef,
@@ -28,6 +31,171 @@ pub fn normalise_evm_wallet(
     // tx hashes already have decoded movements.
     let token_tx_hashes = normalise_token_transfers(paths, project_id, wallet, batch)?;
     normalise_transactions(paths, project_id, wallet, chain, &token_tx_hashes, batch)?;
+    normalise_internal_transactions(paths, project_id, wallet, chain, batch)?;
+    Ok(())
+}
+
+/// `normalise_transactions` claims movement indices 0..=2 per tx hash;
+/// internal call frames get their own space above this base so event IDs of
+/// the same transaction can never collide.
+const INTERNAL_MOVEMENT_BASE: u64 = 10;
+
+/// Native value carried by internal call frames. The transactions endpoint
+/// only reports a transaction's own `value`, so ETH paid out by contracts
+/// (bridge payouts, DEX swap outputs, WETH unwraps) is visible nowhere else.
+/// Gas is not re-counted here: it stays on the top-level transaction.
+fn normalise_internal_transactions(
+    paths: &ProjectPaths,
+    project_id: &str,
+    wallet: &WalletSource,
+    chain: &Chain,
+    batch: &mut Batch,
+) -> Result<()> {
+    let wallet_addr = wallet.address.to_ascii_lowercase();
+    let native_symbol = chain.native_symbol().to_string();
+    let native_decimals = chain.native_decimals();
+
+    for (page_num, rel_path, page) in read_pages(paths, wallet, "internal_transactions")? {
+        for (idx, raw_item) in page.items.iter().enumerate() {
+            let json_path = format!("items[{idx}]");
+            let frame: InternalTransaction = match serde_json::from_value(raw_item.clone()) {
+                Ok(f) => f,
+                Err(err) => {
+                    batch.rejected.push(RejectedItem {
+                        chain: wallet.chain.clone(),
+                        wallet: wallet.address.clone(),
+                        raw_file: rel_path.clone(),
+                        json_path,
+                        reason: format!("unparseable internal transaction: {err}"),
+                        raw: raw_item.clone(),
+                    });
+                    continue;
+                }
+            };
+
+            // Reverted frames move no value; zero-value frames carry no
+            // taxable movement.
+            let failed = frame.error.is_some() || frame.success == Some(false);
+            let raw_value = frame.value.clone().unwrap_or_default();
+            if failed || raw_value.is_empty() || raw_value == "0" {
+                continue;
+            }
+
+            let Some(tx_hash) = frame.transaction_hash.clone() else {
+                batch.rejected.push(RejectedItem {
+                    chain: wallet.chain.clone(),
+                    wallet: wallet.address.clone(),
+                    raw_file: rel_path.clone(),
+                    json_path,
+                    reason: "internal transaction without transaction hash".to_string(),
+                    raw: raw_item.clone(),
+                });
+                continue;
+            };
+            let tx_hash = tx_hash.to_ascii_lowercase();
+
+            let mut reasons: Vec<String> = Vec::new();
+            let from = frame
+                .from
+                .as_ref()
+                .and_then(|a| a.hash.as_ref())
+                .map(|h| h.to_ascii_lowercase());
+            let to = frame
+                .to
+                .as_ref()
+                .and_then(|a| a.hash.as_ref())
+                .map(|h| h.to_ascii_lowercase());
+            let direction = direction_relative_to(&wallet_addr, from.as_deref(), to.as_deref());
+            if direction == Direction::Unknown {
+                reasons.push("internal_transfer_direction_unknown".to_string());
+            }
+
+            let amount = match ScaledAmount::from_raw(&raw_value, native_decimals) {
+                Ok(scaled) => {
+                    if !scaled.exact {
+                        reasons.push("amount_precision_truncated".to_string());
+                    }
+                    scaled.value
+                }
+                Err(err) => {
+                    batch.rejected.push(RejectedItem {
+                        chain: wallet.chain.clone(),
+                        wallet: wallet.address.clone(),
+                        raw_file: rel_path.clone(),
+                        json_path,
+                        reason: format!("unparseable internal value: {err}"),
+                        raw: raw_item.clone(),
+                    });
+                    continue;
+                }
+            };
+
+            let timestamp = frame.timestamp.clone().unwrap_or_else(|| {
+                reasons.push("missing_timestamp".to_string());
+                String::new()
+            });
+
+            let movement_index = match value_as_u64(frame.index.as_ref()) {
+                Some(index) => INTERNAL_MOVEMENT_BASE + index,
+                None => {
+                    reasons.push("missing_internal_call_index".to_string());
+                    INTERNAL_MOVEMENT_BASE + idx as u64
+                }
+            };
+
+            let id = event_id(
+                &wallet.chain,
+                &wallet_addr,
+                &tx_hash,
+                None,
+                Some(movement_index),
+                &native_symbol,
+                &raw_value,
+                direction.as_str(),
+            );
+
+            let needs_review = !reasons.is_empty();
+            batch.events.push(NormalisedEvent {
+                event_id: id,
+                project_id: project_id.to_string(),
+                source_id: wallet.id.clone(),
+                source_kind: SourceKind::Wallet,
+                chain: wallet.chain.clone(),
+                wallet: wallet.address.clone(),
+                timestamp,
+                block_number: value_as_u64(frame.block_number.as_ref()),
+                tx_hash,
+                event_type: EventType::NativeTransfer,
+                direction,
+                asset_symbol: native_symbol.clone(),
+                asset_contract: None,
+                amount,
+                raw_amount: Some(raw_value),
+                token_decimals: u8::try_from(native_decimals).ok(),
+                from_address: from.clone(),
+                to_address: to.clone(),
+                fee_asset: None,
+                fee_amount: None,
+                counterparty: counterparty_of(&wallet_addr, from.as_deref(), to.as_deref()),
+                method: None,
+                confidence: if needs_review {
+                    Confidence::Medium
+                } else {
+                    Confidence::High
+                },
+                needs_review,
+                review_reasons: reasons,
+                source_ref: SourceRef {
+                    raw_file: rel_path.clone(),
+                    raw_page: Some(page_num),
+                    json_path: Some(json_path),
+                    log_index: None,
+                    movement_index: Some(movement_index),
+                },
+            });
+        }
+    }
+
     Ok(())
 }
 
@@ -473,5 +641,81 @@ fn counterparty_of(wallet: &str, from: Option<&str>, to: Option<&str>) -> Option
         from.map(str::to_string)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use camino::Utf8PathBuf;
+    use pretty_assertions::assert_eq;
+
+    const WALLET: &str = "0x1b4399A7c97ae092fB4CCDc1598b2767ECB79652";
+    const BRIDGE: &str = "0x9552a0a6624A23B848060AE5901659CDDa1f83f8";
+
+    fn frame(value: &str, index: u64, to: &str, success: bool) -> serde_json::Value {
+        serde_json::json!({
+            "transaction_hash": "0xf35fc2c6a7233ab411e60761456aa95e4a4b2f90c1a51fa0fc021c3113e1faf0",
+            "index": index,
+            "block_number": 11_989_120,
+            "timestamp": "2025-02-04T22:10:31.000000Z",
+            "from": { "hash": BRIDGE },
+            "to": { "hash": to },
+            "value": value,
+            "success": success,
+            "error": if success { serde_json::Value::Null } else { "Reverted".into() },
+            "type": "call"
+        })
+    }
+
+    #[test]
+    fn internal_frames_become_native_transfers() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf())
+            .map_err(|p| anyhow::anyhow!("non-UTF8 path {}", p.display()))?;
+        let paths = ProjectPaths::new(root);
+        paths.init()?;
+
+        let wallet = WalletSource {
+            id: "lisk_main".to_string(),
+            name: "test".to_string(),
+            chain: "lisk-evm".to_string(),
+            address: WALLET.to_string(),
+            provider: "lisk_blockscout".to_string(),
+        };
+        let cache =
+            EndpointCache::open(&paths, &wallet.chain, &wallet.address, "internal_transactions")?;
+        cache.write_page(
+            1,
+            &serde_json::json!({ "items": [
+                frame("914837044695905424", 6, WALLET, true), // inflow: kept
+                frame("0", 7, WALLET, true),                  // zero value: skipped
+                frame("5", 8, WALLET, false),                 // reverted: skipped
+            ]}),
+        )?;
+
+        let mut batch = Batch::default();
+        normalise_evm_wallet(&paths, "proj", &wallet, &Chain::LiskEvm, &mut batch)?;
+
+        assert_eq!(batch.rejected.len(), 0);
+        assert_eq!(batch.events.len(), 1);
+        let event = &batch.events[0];
+        assert_eq!(event.event_type, EventType::NativeTransfer);
+        assert_eq!(event.direction, Direction::In);
+        assert_eq!(event.asset_symbol, "ETH");
+        assert_eq!(event.amount.to_string(), "0.914837044695905424");
+        assert_eq!(event.counterparty.as_deref(), Some(&*BRIDGE.to_ascii_lowercase()));
+        assert_eq!(
+            event.source_ref.movement_index,
+            Some(INTERNAL_MOVEMENT_BASE + 6)
+        );
+        assert!(event.fee_amount.is_none(), "gas stays on the top-level tx");
+        assert!(!event.needs_review);
+
+        // Same raw data must yield the same id so review decisions survive.
+        let mut second = Batch::default();
+        normalise_evm_wallet(&paths, "proj", &wallet, &Chain::LiskEvm, &mut second)?;
+        assert_eq!(second.events[0].event_id, event.event_id);
+        Ok(())
     }
 }

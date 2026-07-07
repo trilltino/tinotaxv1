@@ -30,6 +30,10 @@ pub struct BlockscoutFetcher {
 const ENDPOINTS: &[(&str, &str)] = &[
     ("transactions", "transactions"),
     ("token_transfers", "token-transfers"),
+    // Native value can arrive in sub-calls the transactions list never
+    // shows (bridge payouts, DEX swap outputs, WETH unwraps). Without this
+    // endpoint those inflows are invisible and disposal pools understate.
+    ("internal_transactions", "internal-transactions"),
 ];
 
 impl BlockscoutFetcher {

@@ -1,16 +1,23 @@
 import {
+  BarChart3,
   CheckCircle2,
+  CloudDownload,
+  Coins,
+  Database,
+  Download,
   ExternalLink,
+  FileText,
   FolderOpen,
   ListFilter,
-  Play,
+  Lock,
   RefreshCw,
   Save,
   Search,
-  ShieldAlert,
-  Trash2,
+  Upload,
+  Wallet,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { HMRC_QUESTIONS, initialHmrcResponses } from "./hmrcQuestionnaire";
 import {
   buildDraft,
   type EditableReviewField,
@@ -18,17 +25,25 @@ import {
   type ReviewFilters,
 } from "./review";
 import type {
-  CleanPlanEntry,
+  CexImportResultDto,
   CommandClient,
+  HmrcQuestionnaireResponse,
+  HmrcQuestionnaireExportResult,
+  ProjectDataViewDto,
   ProjectPathsDto,
   ProjectStatusDto,
   ReviewRow,
   ReviewRowsResult,
+  WalletConfigResult,
+  WalletInsightsResult,
+  WalletSourceDto,
   WorkflowLog,
 } from "./types";
+import WalletInsightsPanel from "./WalletInsights";
+import { DESKTOP_RUNTIME_MESSAGE } from "./tauri";
 
 const RECENT_PROJECTS_KEY = "tinotax.recentProjects";
-const CLEAN_TARGETS = ["logs", "staging", "out", "tax", "evidence", "all-derived"];
+const DEFAULT_CONFIG_PATH = "wallets.toml";
 
 interface AppProps {
   client: CommandClient;
@@ -36,13 +51,23 @@ interface AppProps {
 
 export default function App({ client }: AppProps) {
   const [project, setProject] = useState("");
-  const [config, setConfig] = useState("");
+  const [config, setConfig] = useState(DEFAULT_CONFIG_PATH);
   const [taxYear, setTaxYear] = useState("2024-2025");
   const [resume, setResume] = useState(true);
-  const [allowUnpriced, setAllowUnpriced] = useState(false);
-  const [activeTab, setActiveTab] = useState<"review" | "workflows" | "cleanup">("review");
+  const [activeTab, setActiveTab] = useState<
+    "wallets" | "insights" | "review" | "data" | "questionnaire"
+  >("wallets");
+  const [insights, setInsights] = useState<WalletInsightsResult | null>(null);
+  const [cexSourceId, setCexSourceId] = useState("");
+  const [cexPlatform, setCexPlatform] = useState("kraken");
+  const [cexFile, setCexFile] = useState("");
+  const [cexMapping, setCexMapping] = useState("");
+  const [lastCexImport, setLastCexImport] = useState<CexImportResultDto | null>(null);
   const [status, setStatus] = useState<ProjectStatusDto | null>(null);
   const [paths, setPaths] = useState<ProjectPathsDto | null>(null);
+  const [walletConfig, setWalletConfig] = useState<WalletConfigResult | null>(null);
+  const [selectedWalletIds, setSelectedWalletIds] = useState<string[]>([]);
+  const [dataView, setDataView] = useState<ProjectDataViewDto | null>(null);
   const [review, setReview] = useState<ReviewRowsResult | null>(null);
   const [reviewChanges, setReviewChanges] = useState<
     Record<string, Partial<Record<EditableReviewField, string>>>
@@ -54,20 +79,47 @@ export default function App({ client }: AppProps) {
     taxYear: "",
     asset: "",
   });
-  const [cleanTargets, setCleanTargets] = useState<string[]>(["logs"]);
-  const [cleanPlan, setCleanPlan] = useState<CleanPlanEntry[]>([]);
+  const [questionnaireResponses, setQuestionnaireResponses] = useState<
+    HmrcQuestionnaireResponse[]
+  >(() => initialHmrcResponses());
+  const [lastQuestionnaireExport, setLastQuestionnaireExport] =
+    useState<HmrcQuestionnaireExportResult | null>(null);
   const [logs, setLogs] = useState<WorkflowLog[]>([]);
   const [recentProjects, setRecentProjects] = useState<string[]>(() => loadRecentProjects());
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const autoLoadStarted = useRef(false);
+  const autoProjectStarted = useRef(false);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
-    client.onWorkflowLog((log) => setLogs((current) => [...current, log])).then((fn) => {
-      unlisten = fn;
-    });
+    client
+      .onWorkflowLog((log) => setLogs((current) => [...current, log]))
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch(() => undefined);
     return () => unlisten?.();
+  }, [client]);
+
+  useEffect(() => {
+    if (autoLoadStarted.current || !config.trim()) return;
+    autoLoadStarted.current = true;
+    void loadWalletsForConfig(config, false);
+  }, [config]);
+
+  useEffect(() => {
+    if (autoProjectStarted.current) return;
+    autoProjectStarted.current = true;
+    client
+      .getDefaultProject()
+      .then((defaultProject) => {
+        if (!defaultProject) return;
+        rememberProject(defaultProject);
+        void refreshProject(defaultProject);
+      })
+      .catch(() => undefined);
   }, [client]);
 
   const filteredRows = useMemo(
@@ -90,6 +142,18 @@ export default function App({ client }: AppProps) {
     () => Array.from(new Set((review?.rows ?? []).map((row) => row.taxYear))).sort(),
     [review?.rows],
   );
+  const dataStages = useMemo(() => {
+    const stages = ["Input", "Staging", "Review", "Pricing", "Tax", "Evidence"];
+    return stages.map((stage) => {
+      const artifacts = (dataView?.artifacts ?? []).filter((artifact) => artifact.stage === stage);
+      return {
+        stage,
+        ready: artifacts.filter((artifact) => artifact.exists).length,
+        total: artifacts.length,
+      };
+    });
+  }, [dataView]);
+  const enabledWalletCount = walletConfig?.wallets.filter((wallet) => wallet.enabled).length ?? 0;
 
   async function runTask<T>(label: string, task: () => Promise<T>): Promise<T | null> {
     setBusy(label);
@@ -116,25 +180,89 @@ export default function App({ client }: AppProps) {
   }
 
   async function pickProject() {
-    const selected = await client.selectProjectDir();
+    const selected = await runTask("project picker", () => client.selectProjectDir());
     if (selected) rememberProject(selected);
   }
 
-  async function pickConfig() {
-    const selected = await client.selectConfigFile();
-    if (selected) setConfig(selected);
+  function applyWalletConfig(result: WalletConfigResult) {
+    setWalletConfig(result);
+    setSelectedWalletIds(result.wallets.filter((wallet) => wallet.enabled).map((wallet) => wallet.id));
   }
 
-  async function refreshProject() {
-    if (!project.trim()) return;
+  async function loadWalletsForConfig(nextConfig: string, activate = true) {
+    if (!nextConfig.trim()) return null;
+    const result = await runTask("wallet load", () => client.loadConfigWallets(nextConfig));
+    if (result) {
+      applyWalletConfig(result);
+      setTaxYear(taxYear || "2024-2025");
+      if (activate) setActiveTab("wallets");
+    }
+    return result;
+  }
+
+  async function loadWalletsFromConfig() {
+    await loadWalletsForConfig(config);
+  }
+
+  async function refreshProject(nextProject = project) {
+    const activeProject = nextProject.trim();
+    if (!activeProject) return;
     await runTask("project refresh", async () => {
-      const [nextStatus, nextPaths] = await Promise.all([
-        client.getProjectStatus(project),
-        client.getProjectPaths(project, taxYear),
+      const [nextStatus, nextPaths, nextDataView, nextInsights] = await Promise.all([
+        client.getProjectStatus(activeProject),
+        client.getProjectPaths(activeProject, taxYear),
+        client.getProjectDataView(activeProject, taxYear),
+        // Insights are additive: a project without normalised data yet
+        // should not fail the whole refresh.
+        client
+          .getWalletInsights(activeProject, insights?.insights?.walletId ?? null, taxYear)
+          .catch(() => null),
       ]);
       setStatus(nextStatus);
       setPaths(nextPaths);
+      setDataView(nextDataView);
+      setInsights(nextInsights);
+      const trimmedConfig = config.trim();
+      const nextConfig = !trimmedConfig || trimmedConfig === DEFAULT_CONFIG_PATH ? nextPaths.config : trimmedConfig;
+      if (config !== nextConfig) setConfig(nextConfig);
+      const nextWalletConfig = await client.loadConfigWallets(nextConfig);
+      applyWalletConfig(nextWalletConfig);
     });
+  }
+
+  async function pickCexFile() {
+    const selected = await runTask("CSV picker", () => client.selectCsvFile());
+    if (selected) setCexFile(selected);
+  }
+
+  async function importCex() {
+    if (!project.trim() || !cexSourceId.trim() || !cexFile.trim()) return;
+    const mapping = cexPlatform === "generic" ? parseMappingLines(cexMapping) : null;
+    const result = await runTask("CEX import", () =>
+      client.importCexCsv(project, cexSourceId.trim(), cexPlatform, cexFile.trim(), mapping),
+    );
+    if (result) {
+      setLastCexImport(result);
+      await refreshProject();
+      await loadRows();
+    }
+  }
+
+  async function loadInsights(walletId: string | null) {
+    if (!project.trim()) return;
+    const result = await runTask("wallet insights", () =>
+      client.getWalletInsights(project, walletId, taxYear),
+    );
+    if (result) setInsights(result);
+  }
+
+  async function loadDataView() {
+    if (!project.trim()) return;
+    const result = await runTask("data view load", () => client.getProjectDataView(project, taxYear));
+    if (result) {
+      setDataView(result);
+      setActiveTab("data");
+    }
   }
 
   async function loadRows() {
@@ -158,44 +286,36 @@ export default function App({ client }: AppProps) {
     }
   }
 
-  async function runStartup() {
-    if (!config.trim() || !project.trim()) return;
-    await runTask("startup workflow", () => client.runStartupWorkflow(config, project, resume));
-    await refreshProject();
-  }
-
-  async function runRefreshReview() {
+  async function exportQuestionnaire() {
     if (!project.trim()) return;
-    await runTask("refresh-review workflow", () => client.runRefreshReview(project));
-    await refreshProject();
-    await loadRows();
-  }
-
-  async function runFinalizeYear() {
-    if (!project.trim() || !taxYear.trim()) return;
-    await runTask("finalize-year workflow", () =>
-      client.runFinalizeYear(project, taxYear, allowUnpriced),
-    );
-    await refreshProject();
-  }
-
-  async function planCleanup() {
-    if (!project.trim()) return;
-    const result = await runTask("cleanup plan", () =>
-      client.planProjectClean(project, cleanTargets, taxYear || undefined),
-    );
-    if (result) setCleanPlan(result);
-  }
-
-  async function confirmCleanup() {
-    if (!project.trim() || cleanPlan.length === 0) return;
-    const result = await runTask("cleanup confirm", () =>
-      client.confirmProjectClean(project, cleanTargets, taxYear || undefined),
+    const result = await runTask("HMRC questionnaire export", () =>
+      client.exportHmrcQuestionnaire(project, questionnaireResponses),
     );
     if (result) {
-      setCleanPlan([]);
+      setLastQuestionnaireExport(result);
       await refreshProject();
     }
+  }
+
+  async function syncSelectedWallets() {
+    if (!config.trim() || !project.trim() || selectedWalletIds.length === 0) return;
+    const result = await runTask("wallet sync", () =>
+      client.runWalletSync(config, project, selectedWalletIds, resume),
+    );
+    if (result !== null) {
+      await refreshProject();
+      await loadRows();
+      setActiveTab("review");
+    }
+  }
+
+  function toggleWallet(wallet: WalletSourceDto) {
+    if (!wallet.enabled) return;
+    setSelectedWalletIds((current) =>
+      current.includes(wallet.id)
+        ? current.filter((id) => id !== wallet.id)
+        : [...current, wallet.id],
+    );
   }
 
   function changeReviewField(row: ReviewRow, field: EditableReviewField, value: string) {
@@ -212,17 +332,41 @@ export default function App({ client }: AppProps) {
     return reviewChanges[row.eventId]?.[field] ?? row[field] ?? "";
   }
 
+  function changeQuestionnaireResponse(
+    id: string,
+    field: "answer" | "choice",
+    value: string,
+  ) {
+    setLastQuestionnaireExport(null);
+    setQuestionnaireResponses((current) =>
+      current.map((response) =>
+        response.id === id
+          ? {
+              ...response,
+              [field]: value,
+            }
+          : response,
+      ),
+    );
+  }
+
+  function questionnaireValue(id: string, field: "answer" | "choice") {
+    return questionnaireResponses.find((response) => response.id === id)?.[field] ?? "";
+  }
+
   const projectReady = Boolean(project.trim());
+  const projectDisplayName = project.trim() ? baseName(project) : "No project open";
+  const desktopRuntime = isDesktopRuntime();
 
   return (
     <main className="app-shell">
       <section className="topbar">
         <div>
           <h1>TinoTax</h1>
-          <div className="subtitle">{status?.name ?? "No project loaded"}</div>
+          <div className="subtitle">UK cryptoasset tax preparation</div>
         </div>
         <div className="topbar-actions">
-          <button className="icon-button" onClick={refreshProject} disabled={!projectReady || Boolean(busy)}>
+          <button className="icon-button" onClick={() => refreshProject()} disabled={!projectReady || Boolean(busy)}>
             <RefreshCw size={17} />
             Refresh
           </button>
@@ -231,100 +375,369 @@ export default function App({ client }: AppProps) {
 
       <section className="workspace-grid">
         <aside className="side-panel">
-          <label>
-            Project
-            <div className="input-row">
-              <input
-                data-testid="project-input"
-                value={project}
-                onChange={(event) => rememberProject(event.target.value)}
-                placeholder="C:\\path\\project"
-              />
-              <button className="square-button" onClick={pickProject} aria-label="Select project folder">
-                <FolderOpen size={17} />
-              </button>
+          <section className="project-card">
+            <div className="project-card-head">
+              <Wallet size={15} />
+              <span>Current project</span>
             </div>
-          </label>
-
-          <label>
-            Config
-            <div className="input-row">
-              <input
-                value={config}
-                onChange={(event) => setConfig(event.target.value)}
-                placeholder="wallets.toml"
-              />
-              <button className="square-button" onClick={pickConfig} aria-label="Select config file">
-                <FolderOpen size={17} />
-              </button>
-            </div>
-          </label>
+            <strong className="project-card-name" data-testid="project-name">
+              {projectDisplayName}
+            </strong>
+            {status && (
+              <small className="project-card-meta">
+                {status.walletCount} wallet{status.walletCount === 1 ? "" : "s"} ·{" "}
+                {status.baseCurrency}
+              </small>
+            )}
+            <button className="icon-button" onClick={pickProject} disabled={Boolean(busy)}>
+              <FolderOpen size={16} />
+              Open project…
+            </button>
+          </section>
 
           <label>
             Tax year
             <input value={taxYear} onChange={(event) => setTaxYear(event.target.value)} />
           </label>
 
-          <div className="toggle-row">
+          <button
+            className="icon-button primary"
+            onClick={loadWalletsFromConfig}
+            disabled={!config || Boolean(busy)}
+          >
+            <Wallet size={16} />
+            Load wallets
+          </button>
+
+          {recentProjects.length > 0 && (
+            <div className="recent-list">
+              <span className="recent-title">Recent projects</span>
+              {recentProjects.map((item) => (
+                <button key={item} onClick={() => rememberProject(item)} title={item}>
+                  {baseName(item)}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <details className="advanced-panel">
+            <summary>Advanced</summary>
+            <label>
+              Project folder
+              <div className="input-row">
+                <input
+                  data-testid="project-input"
+                  value={project}
+                  onChange={(event) => rememberProject(event.target.value)}
+                  placeholder="C:\\path\\project"
+                />
+                <button
+                  className="square-button"
+                  onClick={pickProject}
+                  aria-label="Select project folder"
+                >
+                  <FolderOpen size={17} />
+                </button>
+              </div>
+            </label>
             <label className="check-label">
               <input
                 type="checkbox"
                 checked={resume}
                 onChange={(event) => setResume(event.target.checked)}
               />
-              Resume fetch
+              Resume interrupted syncs
             </label>
-            <label className="check-label">
-              <input
-                type="checkbox"
-                checked={allowUnpriced}
-                onChange={(event) => setAllowUnpriced(event.target.checked)}
-              />
-              Allow unpriced
-            </label>
-          </div>
-
-          <button
-            className="icon-button primary"
-            onClick={runStartup}
-            disabled={!projectReady || !config || Boolean(busy)}
-          >
-            <Play size={16} />
-            Create from config
-          </button>
-
-          <div className="recent-list">
-            {recentProjects.map((item) => (
-              <button key={item} onClick={() => rememberProject(item)} title={item}>
-                {item}
-              </button>
-            ))}
-          </div>
+          </details>
         </aside>
 
         <section className="main-panel">
-          <StatusStrip status={status} paths={paths} onOpenPath={(path) => client.openPath(path)} />
-
           <nav className="tabs">
+            <button
+              className={activeTab === "wallets" ? "active" : ""}
+              onClick={() => setActiveTab("wallets")}
+            >
+              <Wallet size={16} />
+              Wallets
+            </button>
+            <button
+              className={activeTab === "insights" ? "active" : ""}
+              onClick={() => setActiveTab("insights")}
+            >
+              <BarChart3 size={16} />
+              Wallet Data
+            </button>
             <button className={activeTab === "review" ? "active" : ""} onClick={() => setActiveTab("review")}>
               <ListFilter size={16} />
               Review
             </button>
-            <button
-              className={activeTab === "workflows" ? "active" : ""}
-              onClick={() => setActiveTab("workflows")}
-            >
-              <Play size={16} />
-              Workflows
+            <button className={activeTab === "data" ? "active" : ""} onClick={() => setActiveTab("data")}>
+              <Database size={16} />
+              Data Viewer
             </button>
-            <button className={activeTab === "cleanup" ? "active" : ""} onClick={() => setActiveTab("cleanup")}>
-              <Trash2 size={16} />
-              Cleanup
+            <button
+              className={activeTab === "questionnaire" ? "active" : ""}
+              onClick={() => setActiveTab("questionnaire")}
+            >
+              <FileText size={16} />
+              HMRC Questionnaire
             </button>
           </nav>
 
           {message && <div className="notice success">{message}</div>}
+          {!desktopRuntime && <div className="notice warning">{DESKTOP_RUNTIME_MESSAGE}</div>}
           {error && <div className="notice error">{error}</div>}
+
+          {activeTab === "wallets" && (
+            <section className="tab-body wallet-body">
+              <div className="toolbar wallet-toolbar">
+                <button
+                  className="icon-button"
+                  onClick={loadWalletsFromConfig}
+                  disabled={!config || Boolean(busy)}
+                >
+                  <RefreshCw size={16} />
+                  Reload wallets
+                </button>
+                <button
+                  className="icon-button primary"
+                  onClick={syncSelectedWallets}
+                  disabled={
+                    !projectReady ||
+                    !config ||
+                    selectedWalletIds.length === 0 ||
+                    Boolean(busy)
+                  }
+                >
+                  <CloudDownload size={16} />
+                  Sync selected
+                </button>
+                <div
+                  className={`price-pill ${walletConfig && !walletConfig.pricingApiReady ? "gated" : ""}`}
+                  title={walletConfig?.pricingApiReason}
+                  data-testid="pricing-api-pill"
+                >
+                  {walletConfig && !walletConfig.pricingApiReady ? (
+                    <Lock size={16} />
+                  ) : (
+                    <Coins size={16} />
+                  )}
+                  {walletConfig?.priceProvider ?? "CoinGecko historical GBP"}
+                  {walletConfig && !walletConfig.pricingApiReady && (
+                    <span className="pill-note">key needed</span>
+                  )}
+                </div>
+              </div>
+
+              <section className="wallet-selector-panel" aria-label="Wallet selector">
+                <div className="wallet-selector-header">
+                  <div>
+                    <span>Wallet selector</span>
+                    <strong>
+                      {walletConfig
+                        ? `${selectedWalletIds.length} selected from ${enabledWalletCount} enabled`
+                        : "No wallets loaded yet"}
+                    </strong>
+                  </div>
+                  <button
+                    className="icon-button"
+                    onClick={loadWalletsFromConfig}
+                    disabled={!config || Boolean(busy)}
+                  >
+                    <RefreshCw size={16} />
+                    Load selector
+                  </button>
+                </div>
+
+                {walletConfig ? (
+                  <>
+                    <div className="wallet-summary">
+                      <div>
+                        <span>Config</span>
+                        <strong>{walletConfig.projectName}</strong>
+                      </div>
+                      <div>
+                        <span>Period</span>
+                        <strong>{walletConfig.periodStart.slice(0, 10)} to {walletConfig.periodEnd.slice(0, 10)}</strong>
+                      </div>
+                      <div>
+                        <span>CEX CSVs</span>
+                        <strong>{walletConfig.cexImportCount}</strong>
+                      </div>
+                      <div>
+                        <span>Base</span>
+                        <strong>{walletConfig.baseCurrency}</strong>
+                      </div>
+                    </div>
+
+                    <div className="wallet-grid" data-testid="wallet-grid">
+                      {walletConfig.wallets.map((wallet) => {
+                        const selected = selectedWalletIds.includes(wallet.id);
+                        return (
+                          <button
+                            type="button"
+                            key={wallet.id}
+                            className={`wallet-card ${selected ? "selected" : ""} ${
+                              wallet.enabled ? "" : "disabled"
+                            }`}
+                            data-testid={`wallet-card-${wallet.id}`}
+                            disabled={!wallet.enabled}
+                            aria-pressed={selected}
+                            onClick={() => toggleWallet(wallet)}
+                          >
+                            <div className="wallet-card-top">
+                              <span className={wallet.enabled ? "wallet-state enabled" : "wallet-state disabled"}>
+                                {wallet.enabled ? <CheckCircle2 size={16} /> : <Lock size={16} />}
+                                {wallet.enabled ? "API enabled" : "API pending"}
+                              </span>
+                              <span className={`wallet-check ${selected ? "selected" : ""}`} aria-hidden="true">
+                                {selected && <CheckCircle2 size={15} />}
+                              </span>
+                            </div>
+                            <div className="wallet-card-title">
+                              <strong>{wallet.name}</strong>
+                              <small>{wallet.chain} - {wallet.nativeAsset}</small>
+                            </div>
+                            <code>{wallet.address}</code>
+                            <div className="wallet-meta">
+                              <span>{wallet.apiKind}</span>
+                              <span>{wallet.provider}</span>
+                            </div>
+                            <small className="wallet-api">
+                              {wallet.enabled ? wallet.apiUrl : wallet.disabledReason}
+                            </small>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                ) : (
+                  <div className="wallet-empty-state">
+                    <Wallet size={28} />
+                    <strong>No wallets loaded</strong>
+                    <span>Load your wallets to get started</span>
+                    <button
+                      className="icon-button primary"
+                      onClick={loadWalletsFromConfig}
+                      disabled={!config || Boolean(busy)}
+                    >
+                      <Wallet size={16} />
+                      Load wallet selector
+                    </button>
+                  </div>
+                )}
+              </section>
+
+              <section className="wallet-selector-panel" aria-label="CEX imports">
+                <div className="wallet-selector-header">
+                  <div>
+                    <span>CEX imports</span>
+                    <strong>
+                      {status
+                        ? `${status.cexImportCount} export(s) declared`
+                        : "Exchange CSV exports (full, unedited files)"}
+                    </strong>
+                  </div>
+                </div>
+                <div className="cex-import-grid">
+                  <label>
+                    Source id
+                    <input
+                      data-testid="cex-id-input"
+                      value={cexSourceId}
+                      onChange={(event) => setCexSourceId(event.target.value)}
+                      placeholder="kraken_2021"
+                    />
+                  </label>
+                  <label>
+                    Exchange
+                    <select
+                      data-testid="cex-platform-select"
+                      value={cexPlatform}
+                      onChange={(event) => setCexPlatform(event.target.value)}
+                    >
+                      <option value="kraken">Kraken (Ledgers export)</option>
+                      <option value="coinbase">Coinbase</option>
+                      <option value="binance">Binance</option>
+                      <option value="awaken">Awaken</option>
+                      <option value="generic">Other (column mapping)</option>
+                    </select>
+                  </label>
+                  <label className="cex-file-label">
+                    CSV file
+                    <div className="input-row">
+                      <input
+                        data-testid="cex-file-input"
+                        value={cexFile}
+                        onChange={(event) => setCexFile(event.target.value)}
+                        placeholder="C:\\path\\export.csv"
+                      />
+                      <button
+                        className="square-button"
+                        onClick={pickCexFile}
+                        aria-label="Select CSV file"
+                      >
+                        <FolderOpen size={17} />
+                      </button>
+                    </div>
+                  </label>
+                </div>
+                {cexPlatform === "generic" && (
+                  <label>
+                    Column mapping (canonical = CSV header, one per line)
+                    <textarea
+                      data-testid="cex-mapping-input"
+                      value={cexMapping}
+                      onChange={(event) => setCexMapping(event.target.value)}
+                      placeholder={"timestamp = Date\ntype = Operation\nasset = Coin\namount = Change"}
+                      rows={4}
+                    />
+                  </label>
+                )}
+                <div className="toolbar">
+                  <button
+                    className="icon-button primary"
+                    data-testid="cex-import-button"
+                    onClick={importCex}
+                    disabled={
+                      !projectReady || !cexSourceId.trim() || !cexFile.trim() || Boolean(busy)
+                    }
+                  >
+                    <Upload size={16} />
+                    Import CEX CSV
+                  </button>
+                  {lastCexImport && (
+                    <span className="insight-caption" data-testid="cex-import-report">
+                      {lastCexImport.sourceId}: {lastCexImport.rowsRead} rows read,{" "}
+                      {lastCexImport.eventsEmitted} events, {lastCexImport.priceHints} price hints,{" "}
+                      {lastCexImport.fiatMovementsSkipped} fiat rows skipped
+                      {lastCexImport.earliest &&
+                        ` (${lastCexImport.earliest.slice(0, 10)} to ${lastCexImport.latest.slice(0, 10)})`}
+                    </span>
+                  )}
+                </div>
+              </section>
+
+              {logs.length > 0 && (
+                <div className="log-pane wallet-log">
+                  {logs.map((log, index) => (
+                    <div key={`${log.message}-${index}`} className={log.level}>
+                      {log.message}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
+
+          {activeTab === "insights" && (
+            <WalletInsightsPanel
+              result={insights}
+              busy={Boolean(busy)}
+              onSelectWallet={(walletId) => void loadInsights(walletId)}
+              onReload={() => void loadInsights(insights?.insights?.walletId ?? null)}
+            />
+          )}
 
           {activeTab === "review" && (
             <section className="tab-body">
@@ -492,124 +905,195 @@ export default function App({ client }: AppProps) {
             </section>
           )}
 
-          {activeTab === "workflows" && (
-            <section className="tab-body workflow-grid">
-              <button className="workflow-button" onClick={runStartup} disabled={!projectReady || !config || Boolean(busy)}>
-                <Play size={18} />
-                Startup
-              </button>
-              <button className="workflow-button" onClick={runRefreshReview} disabled={!projectReady || Boolean(busy)}>
-                <RefreshCw size={18} />
-                Refresh review
-              </button>
-              <button className="workflow-button" onClick={runFinalizeYear} disabled={!projectReady || Boolean(busy)}>
-                <CheckCircle2 size={18} />
-                Finalize year
-              </button>
-              <div className="log-pane">
-                {logs.map((log, index) => (
-                  <div key={`${log.message}-${index}`} className={log.level}>
-                    {log.message}
+          {activeTab === "data" && (
+            <section className="tab-body data-body">
+              <div className="toolbar">
+                <button
+                  className="icon-button"
+                  onClick={loadDataView}
+                  disabled={!projectReady || Boolean(busy)}
+                >
+                  <RefreshCw size={16} />
+                  Load data view
+                </button>
+                {paths && (
+                  <>
+                    <button className="icon-button" onClick={() => client.openPath(paths.root)}>
+                      <ExternalLink size={16} />
+                      Project
+                    </button>
+                    <button className="icon-button" onClick={() => client.openPath(paths.raw)}>
+                      <ExternalLink size={16} />
+                      Raw
+                    </button>
+                    <button className="icon-button" onClick={() => client.openPath(paths.out)}>
+                      <ExternalLink size={16} />
+                      Out
+                    </button>
+                    <button
+                      className="icon-button"
+                      onClick={() => client.openPath(paths.evidencePack)}
+                    >
+                      <ExternalLink size={16} />
+                      Evidence pack
+                    </button>
+                  </>
+                )}
+              </div>
+
+              <div className="data-stage-grid">
+                {dataStages.map((stage) => (
+                  <div key={stage.stage} className="data-stage">
+                    <span>{stage.stage}</span>
+                    <strong>{stage.ready}/{stage.total}</strong>
                   </div>
+                ))}
+              </div>
+
+              <div className="table-wrap">
+                <table className="data-table" data-testid="data-view-table">
+                  <thead>
+                    <tr>
+                      <th>Stage</th>
+                      <th>Data</th>
+                      <th>Status</th>
+                      <th>Count</th>
+                      <th>Size</th>
+                      <th>Path</th>
+                      <th>Open</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(dataView?.artifacts ?? []).map((artifact) => (
+                      <tr key={`${artifact.stage}-${artifact.path}`} className={artifact.exists ? "" : "missing"}>
+                        <td>{artifact.stage}</td>
+                        <td>
+                          <strong>{artifact.label}</strong>
+                          <small>{artifact.kind}</small>
+                        </td>
+                        <td>
+                          <span className={`data-status ${artifact.exists ? "ready" : "missing"}`}>
+                            {artifact.exists ? "Ready" : "Missing"}
+                          </span>
+                        </td>
+                        <td>{artifact.itemLabel ? `${artifact.itemCount} ${artifact.itemLabel}` : "-"}</td>
+                        <td>{formatBytes(artifact.bytes)}</td>
+                        <td>
+                          <code title={artifact.path}>{artifact.path}</code>
+                        </td>
+                        <td>
+                          <button
+                            className="square-button"
+                            onClick={() => client.openPath(artifact.path)}
+                            disabled={!artifact.exists}
+                            aria-label={`Open ${artifact.label}`}
+                          >
+                            <ExternalLink size={15} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {!dataView && (
+                      <tr>
+                        <td colSpan={7}>No project data loaded</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          {activeTab === "questionnaire" && (
+            <section className="tab-body questionnaire-body">
+              <div className="toolbar">
+                <button
+                  className="icon-button primary"
+                  onClick={exportQuestionnaire}
+                  disabled={!projectReady || Boolean(busy)}
+                >
+                  <Download size={16} />
+                  Export PDF
+                </button>
+                {lastQuestionnaireExport && (
+                  <>
+                    <button
+                      className="icon-button"
+                      onClick={() => client.openPath(lastQuestionnaireExport.pdfPath)}
+                    >
+                      <ExternalLink size={16} />
+                      Open PDF
+                    </button>
+                    <button
+                      className="icon-button"
+                      onClick={() => client.openPath(lastQuestionnaireExport.questionnairePath)}
+                    >
+                      <ExternalLink size={16} />
+                      Open TOML
+                    </button>
+                  </>
+                )}
+              </div>
+
+              <div className="questionnaire-grid">
+                {HMRC_QUESTIONS.map((question) => (
+                  <section className="questionnaire-item" key={question.id}>
+                    <div className="questionnaire-heading">
+                      <strong>{question.title}</strong>
+                      {question.yesNo && (
+                        <select
+                          aria-label={`${question.title} response`}
+                          value={questionnaireValue(question.id, "choice")}
+                          onChange={(event) =>
+                            changeQuestionnaireResponse(question.id, "choice", event.target.value)
+                          }
+                        >
+                          <option value="unknown">Unknown</option>
+                          <option value="no">No</option>
+                          <option value="yes">Yes</option>
+                        </select>
+                      )}
+                    </div>
+                    <label>
+                      {question.prompt}
+                      <textarea
+                        data-testid={`hmrc-answer-${question.id}`}
+                        value={questionnaireValue(question.id, "answer")}
+                        onChange={(event) =>
+                          changeQuestionnaireResponse(question.id, "answer", event.target.value)
+                        }
+                        rows={question.id === "q13" ? 5 : 4}
+                      />
+                    </label>
+                  </section>
                 ))}
               </div>
             </section>
           )}
 
-          {activeTab === "cleanup" && (
-            <section className="tab-body">
-              <div className="toolbar">
-                {CLEAN_TARGETS.map((target) => (
-                  <label className="check-label" key={target}>
-                    <input
-                      type="checkbox"
-                      checked={cleanTargets.includes(target)}
-                      onChange={(event) => {
-                        setCleanPlan([]);
-                        setCleanTargets((current) =>
-                          event.target.checked
-                            ? [...current, target]
-                            : current.filter((item) => item !== target),
-                        );
-                      }}
-                    />
-                    {target}
-                  </label>
-                ))}
-                <button className="icon-button" onClick={planCleanup} disabled={!projectReady || cleanTargets.length === 0 || Boolean(busy)}>
-                  <ShieldAlert size={16} />
-                  Plan
-                </button>
-                <button
-                  className="icon-button danger"
-                  onClick={confirmCleanup}
-                  disabled={cleanPlan.length === 0 || Boolean(busy)}
-                >
-                  <Trash2 size={16} />
-                  Confirm
-                </button>
-              </div>
-              <div className="cleanup-list">
-                {cleanPlan.map((entry) => (
-                  <div key={`${entry.action}-${entry.path}`} className="cleanup-row">
-                    <span>{entry.target}</span>
-                    <strong>{entry.action}</strong>
-                    <code>{entry.path}</code>
-                    <em>{entry.exists ? "exists" : "missing"}</em>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
         </section>
       </section>
     </main>
   );
 }
 
-function StatusStrip({
-  status,
-  paths,
-  onOpenPath,
-}: {
-  status: ProjectStatusDto | null;
-  paths: ProjectPathsDto | null;
-  onOpenPath: (path: string) => void;
-}) {
-  return (
-    <section className="status-strip">
-      <div>
-        <span>Wallets</span>
-        <strong>{status?.walletCount ?? 0}</strong>
-      </div>
-      <div>
-        <span>CEX</span>
-        <strong>{status?.cexImportCount ?? 0}</strong>
-      </div>
-      <div>
-        <span>Overrides</span>
-        <strong>{status?.reviewOverrideCount ?? 0}</strong>
-      </div>
-      <div>
-        <span>Prices</span>
-        <strong>{status?.priceObservationCount ?? 0}</strong>
-      </div>
-      <div className="path-actions">
-        {paths && (
-          <>
-            <button onClick={() => onOpenPath(paths.out)}>
-              <ExternalLink size={15} />
-              Out
-            </button>
-            <button onClick={() => onOpenPath(paths.evidencePack)}>
-              <ExternalLink size={15} />
-              Pack
-            </button>
-          </>
-        )}
-      </div>
-    </section>
-  );
+function parseMappingLines(text: string): Record<string, string> | null {
+  const mapping: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const separator = trimmed.indexOf("=");
+    if (separator < 1) continue;
+    const key = trimmed.slice(0, separator).trim();
+    const value = trimmed.slice(separator + 1).trim();
+    if (key && value) mapping[key] = value;
+  }
+  return Object.keys(mapping).length > 0 ? mapping : null;
+}
+
+function baseName(path: string) {
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : path;
 }
 
 function loadRecentProjects(): string[] {
@@ -619,4 +1103,15 @@ function loadRecentProjects(): string[] {
   } catch {
     return [];
   }
+}
+
+function formatBytes(bytes: number) {
+  if (bytes <= 0) return "-";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function isDesktopRuntime() {
+  return Boolean((globalThis as { isTauri?: boolean }).isTauri);
 }

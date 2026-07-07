@@ -48,6 +48,26 @@ async fn select_project_dir(app: AppHandle) -> Option<String> {
 }
 
 #[tauri::command]
+async fn select_csv_file(app: AppHandle) -> Option<String> {
+    let (tx, rx) = oneshot::channel();
+    app.dialog()
+        .file()
+        .add_filter("CSV", &["csv"])
+        .pick_file(move |path| {
+            if tx.send(path).is_err() {
+                tracing::warn!("desktop csv picker result receiver was dropped");
+            }
+        });
+    match rx.await {
+        Ok(path) => file_path_to_string(path),
+        Err(err) => {
+            tracing::warn!(%err, "desktop csv picker callback was canceled");
+            None
+        }
+    }
+}
+
+#[tauri::command]
 fn get_project_status(project: String) -> Result<tinotax_app::ProjectStatusDto, String> {
     tinotax_app::desktop_project_status(&project).map_err(error_text)
 }
@@ -61,6 +81,46 @@ fn get_project_paths(
         &project,
         tax_year.as_deref(),
     ))
+}
+
+#[tauri::command]
+fn get_default_project() -> Option<String> {
+    tinotax_app::desktop_default_project()
+}
+
+#[tauri::command]
+fn get_project_data_view(
+    project: String,
+    tax_year: Option<String>,
+) -> Result<tinotax_app::ProjectDataViewDto, String> {
+    tinotax_app::desktop_project_data_view(&project, tax_year.as_deref()).map_err(error_text)
+}
+
+#[tauri::command]
+fn load_config_wallets(config: String) -> Result<tinotax_app::WalletConfigResult, String> {
+    tinotax_app::desktop_config_wallets(&config).map_err(error_text)
+}
+
+#[tauri::command]
+fn import_cex_csv(
+    project: String,
+    source_id: String,
+    platform: String,
+    file: String,
+    mapping: Option<std::collections::BTreeMap<String, String>>,
+) -> Result<tinotax_app::CexImportResultDto, String> {
+    tinotax_app::desktop_import_cex(&project, &source_id, &platform, &file, mapping)
+        .map_err(error_text)
+}
+
+#[tauri::command]
+fn get_wallet_insights(
+    project: String,
+    wallet_id: Option<String>,
+    tax_year: Option<String>,
+) -> Result<tinotax_app::WalletInsightsResult, String> {
+    tinotax_app::desktop_wallet_insights(&project, wallet_id.as_deref(), tax_year.as_deref())
+        .map_err(error_text)
 }
 
 #[tauri::command]
@@ -98,6 +158,27 @@ async fn run_startup_workflow(
         }
         Err(err) => {
             emit_log(&app, &format!("startup workflow failed: {err:#}"), "error");
+            Err(error_text(err))
+        }
+    }
+}
+
+#[tauri::command]
+async fn run_wallet_sync(
+    app: AppHandle,
+    config: String,
+    project: String,
+    wallet_ids: Vec<String>,
+    resume: bool,
+) -> Result<(), String> {
+    emit_log(&app, "wallet sync started", "info");
+    match tinotax_app::workflow_sync_wallets(&config, &project, &wallet_ids, resume).await {
+        Ok(()) => {
+            emit_log(&app, "wallet sync completed", "info");
+            Ok(())
+        }
+        Err(err) => {
+            emit_log(&app, &format!("wallet sync failed: {err:#}"), "error");
             Err(error_text(err))
         }
     }
@@ -171,6 +252,14 @@ fn save_review_overrides(
 }
 
 #[tauri::command]
+fn export_hmrc_questionnaire(
+    project: String,
+    responses: Vec<tinotax_app::HmrcQuestionnaireResponseDraft>,
+) -> Result<tinotax_app::HmrcQuestionnaireExportResult, String> {
+    tinotax_app::export_hmrc_questionnaire(&project, responses).map_err(error_text)
+}
+
+#[tauri::command]
 fn open_path(path: String) -> Result<(), String> {
     open::that_detached(path).map_err(|err| err.to_string())
 }
@@ -182,16 +271,24 @@ pub fn run() -> tauri::Result<()> {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             select_config_file,
+            select_csv_file,
             select_project_dir,
             get_project_status,
             get_project_paths,
+            get_default_project,
+            get_project_data_view,
+            load_config_wallets,
+            import_cex_csv,
+            get_wallet_insights,
             plan_project_clean,
             confirm_project_clean,
             run_startup_workflow,
+            run_wallet_sync,
             run_refresh_review,
             run_finalize_year,
             load_review_rows,
             save_review_overrides,
+            export_hmrc_questionnaire,
             open_path,
         ])
         .run(tauri::generate_context!())

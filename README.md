@@ -92,14 +92,14 @@ It keeps the CLI as the canonical automation surface, but calls the same Rust
 app/core orchestration directly instead of shelling out.
 
 ```bash
-just desktop-install
-just desktop-dev
+just dev
 ```
 
-The app opens or creates local projects, shows project status and paths, edits
-append-only review overrides, runs startup/refresh/finalize helpers, and
-performs dry-run-first cleanup. Local checks are available with
-`just desktop-test`; the seeded WebDriver flow is `just desktop-e2e`.
+The app opens local projects, loads wallets from the selected config, enables
+the Lisk Blockscout API path first, prepares review rows, edits append-only
+review overrides, and exports HMRC questionnaire responses. GBP pricing is
+driven by CoinGecko in the project pipeline. Local checks are available with
+`just desktop-test`; the seeded WebDriver flow is `just e2e`.
 
 ## Outputs
 

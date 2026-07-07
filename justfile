@@ -9,6 +9,15 @@ bin := cargo + " run -p tinotax-cli --"
 default:
     @just --list
 
+# Install frontend dependencies and load the full desktop app.
+dev:
+    {{just_executable()}} desktop-install
+    {{just_executable()}} desktop-dev
+
+# Run the full seeded desktop end-to-end flow.
+e2e:
+    {{just_executable()}} desktop-e2e
+
 # Run the development quality gate.
 check: metadata policy-scan fmt-check clippy check-build test doc
 
@@ -51,7 +60,7 @@ doc:
 
 # Install desktop frontend dependencies.
 desktop-install:
-    cd apps/desktop; npm install
+    cd apps/desktop; npm install --no-audit --fund=false
 
 # Run the Tauri desktop app in development mode.
 desktop-dev:
@@ -133,6 +142,10 @@ diagnose project="./fox-project":
 # Verify evidence integrity and unresolved production risks.
 readiness project="./fox-project":
     {{bin}} readiness --project {{project}}
+
+# Export normalised reports and the audit manifest.
+report project="./fox-project":
+    {{bin}} report --project {{project}}
 
 # Export every event for spreadsheet review.
 review-export project="./fox-project":

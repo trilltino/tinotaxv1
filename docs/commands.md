@@ -21,15 +21,23 @@ operations. It does not replace the CLI; it calls Rust commands that reuse the
 same `tinotax-app` orchestration:
 
 ```bash
-just desktop-install
-just desktop-dev
+just dev
 just desktop-test
-just desktop-e2e
+just e2e
 ```
 
-The desktop app covers project open/create, typed status and path inspection,
-append-only review override saves, startup/refresh/finalize workflow buttons,
-workflow logs, and dry-run-first cleanup.
+The desktop app covers project open, config-driven wallet selection, the
+Lisk Blockscout API sync path, typed status and path inspection,
+append-only review override saves, workflow logs, and HMRC questionnaire
+PDF/TOML export. CEX CSV exports (Kraken, Coinbase, Binance, Awaken, or a
+generic column-mapped format) can be imported from the Wallets tab: the file
+is copied unedited into `raw/cex/<id>/`, registered as a `[[cex_csvs]]`
+entry in `project.toml`, and normalised — the same pipeline `import-cex`
+runs. The Wallet Data tab is a per-wallet dashboard over files
+the pipeline already writes: monthly activity, per-asset movement and GBP
+totals, pricing coverage, review progress, and the tax-year headline
+numbers. Additional chain API buttons stay disabled until the APIs are
+signed off for the desktop flow.
 
 | Command | What it does |
 |---|---|

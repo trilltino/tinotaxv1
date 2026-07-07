@@ -2,6 +2,7 @@
 //! together. No business logic lives here or in the CLI.
 
 pub mod analysis_export;
+pub mod cex_import;
 pub mod desktop_api;
 pub mod diagnose_project;
 pub mod doctor;
@@ -13,15 +14,20 @@ pub mod preflight;
 pub mod project_ops;
 pub mod readiness;
 pub mod run_demo;
+pub mod wallet_insights;
 
 use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
 use tinotax_config::ProjectConfig;
 use tinotax_store::ProjectPaths;
 
+pub use cex_import::{desktop_import_cex, CexImportResultDto};
 pub use desktop_api::{
-    desktop_project_paths, desktop_project_status, load_review_rows, save_review_overrides,
-    ProjectPathsDto, ProjectStatusDto, ReviewOverrideDraft, ReviewRowsResult, SaveReviewResult,
+    desktop_config_wallets, desktop_default_project, desktop_project_data_view,
+    desktop_project_paths, desktop_project_status, export_hmrc_questionnaire, load_review_rows,
+    save_review_overrides, DataArtifactDto, HmrcQuestionnaireExportResult,
+    HmrcQuestionnaireResponseDraft, ProjectDataViewDto, ProjectPathsDto, ProjectStatusDto,
+    ReviewOverrideDraft, ReviewRowsResult, SaveReviewResult, WalletConfigResult, WalletSourceDto,
 };
 pub use diagnose_project::diagnose_project;
 pub use doctor::doctor;
@@ -35,19 +41,49 @@ pub use pipeline::{
 pub use preflight::preflight;
 pub use project_ops::{
     project_clean, project_clean_confirm, project_clean_plan, project_paths, project_status,
-    workflow_finalize_year, workflow_refresh_review, workflow_startup, CleanPlanEntry, CleanTarget,
+    workflow_finalize_year, workflow_refresh_review, workflow_startup, workflow_sync_wallets,
+    CleanPlanEntry, CleanTarget,
 };
 pub use readiness::readiness;
 pub use run_demo::run_demo;
+pub use wallet_insights::{desktop_wallet_insights, WalletInsightsResult};
 
 /// Create a project folder from a config file (`project init`).
 pub fn project_init(config: &str, out: &str) -> Result<ProjectPaths> {
-    let config_path = Utf8PathBuf::from(config);
+    let config_path = resolve_config_path(config)?;
     // Validate before creating anything.
     ProjectConfig::load(&config_path)?;
     let paths = ProjectPaths::init_from_config(Utf8PathBuf::from(out), &config_path)?;
     println!("initialised project at {}", paths.root);
     Ok(paths)
+}
+
+pub(crate) fn resolve_config_path(config: &str) -> Result<Utf8PathBuf> {
+    let requested = Utf8PathBuf::from(config);
+    if requested.is_absolute() || requested.exists() {
+        return Ok(requested);
+    }
+
+    let cwd = std::env::current_dir().context("resolving current directory")?;
+    if let Ok(cwd) = Utf8PathBuf::from_path_buf(cwd) {
+        if let Some(found) = find_relative_config(&cwd, &requested) {
+            return Ok(found);
+        }
+    }
+
+    let manifest_dir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    if let Some(found) = find_relative_config(&manifest_dir, &requested) {
+        return Ok(found);
+    }
+
+    Ok(requested)
+}
+
+fn find_relative_config(start: &Utf8PathBuf, requested: &Utf8PathBuf) -> Option<Utf8PathBuf> {
+    start.ancestors().find_map(|dir| {
+        let candidate = dir.join(requested);
+        candidate.exists().then_some(candidate)
+    })
 }
 
 /// Open an existing project folder and its installed `project.toml`.

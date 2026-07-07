@@ -5,6 +5,7 @@
 
 use std::collections::BTreeSet;
 use std::fs;
+use std::io::Write;
 use std::str::FromStr;
 
 use anyhow::{bail, Context, Result};
@@ -12,7 +13,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use tinotax_core::{
-    uk_tax_year, PriceSource, ReviewAction, ReviewOverride, SourceKind, TaxEventType,
+    uk_tax_year, Chain, PriceSource, ReviewAction, ReviewOverride, SourceKind, TaxEventType,
 };
 use tinotax_store::{JsonlWriter, ProjectPaths};
 
@@ -66,6 +67,25 @@ pub struct ProjectPathsDto {
     pub opening_pools: String,
     pub tax: String,
     pub evidence_pack: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectDataViewDto {
+    pub artifacts: Vec<DataArtifactDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DataArtifactDto {
+    pub stage: String,
+    pub label: String,
+    pub kind: String,
+    pub path: String,
+    pub exists: bool,
+    pub bytes: u64,
+    pub item_count: u64,
+    pub item_label: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -146,6 +166,131 @@ pub struct SaveReviewResult {
     pub change_log: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WalletConfigResult {
+    pub project_name: String,
+    pub base_currency: String,
+    pub period_start: String,
+    pub period_end: String,
+    pub cex_import_count: usize,
+    pub price_provider: String,
+    /// Whether a CoinGecko key is present for historical `prices fetch`.
+    pub pricing_api_ready: bool,
+    pub pricing_api_reason: String,
+    pub wallets: Vec<WalletSourceDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WalletSourceDto {
+    pub id: String,
+    pub name: String,
+    pub chain: String,
+    pub address: String,
+    pub provider: String,
+    pub api_kind: String,
+    pub api_url: String,
+    pub native_asset: String,
+    pub enabled: bool,
+    pub disabled_reason: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HmrcQuestionnaireResponseDraft {
+    pub id: String,
+    pub question: String,
+    pub answer: String,
+    #[serde(default)]
+    pub choice: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HmrcQuestionnaireExportResult {
+    pub pdf_path: String,
+    pub questionnaire_path: String,
+}
+
+pub fn desktop_config_wallets(config: &str) -> Result<WalletConfigResult> {
+    let config_path = crate::resolve_config_path(config)?;
+    let config = tinotax_config::ProjectConfig::load(&config_path)
+        .with_context(|| format!("loading wallet config {config_path}"))?;
+
+    // Gating is driven by which API a wallet actually needs, not a hardcoded
+    // chain: public Blockscout explorers (Lisk, IOTA EVM) are keyless;
+    // NearBlocks needs a key present before it can be synced.
+    let nearblocks_ready = env_present("NEARBLOCKS_API_KEY");
+    let wallets = config
+        .wallets
+        .iter()
+        .map(|wallet| {
+            let provider = config.provider_for(wallet);
+            let chain = Chain::from(wallet.chain.clone());
+            let (enabled, disabled_reason) = wallet_gate(provider.kind, nearblocks_ready);
+            WalletSourceDto {
+                id: wallet.id.clone(),
+                name: wallet.name.clone(),
+                chain: wallet.chain.clone(),
+                address: wallet.address.clone(),
+                provider: wallet.provider.clone(),
+                api_kind: provider_kind_label(provider.kind).to_string(),
+                api_url: provider.base_url.clone(),
+                native_asset: chain.native_symbol().to_string(),
+                enabled,
+                disabled_reason,
+            }
+        })
+        .collect();
+
+    // Pricing is a project-level capability: `prices fetch` for anything
+    // older than ~365 days needs a paid CoinGecko key.
+    let pricing_api_ready = env_present("COINGECKO_PRO_API_KEY")
+        || env_present("COINGECKO_DEMO_API_KEY")
+        || env_present("COINGECKO_API_KEY");
+    let pricing_api_reason = if pricing_api_ready {
+        "CoinGecko key detected — historical GBP fetch available".to_string()
+    } else {
+        "No CoinGecko key set — historical GBP fetch (older than 365 days) needs a paid key"
+            .to_string()
+    };
+
+    Ok(WalletConfigResult {
+        project_name: config.project.name,
+        base_currency: config.project.base_currency,
+        period_start: config.project.period_start,
+        period_end: config.project.period_end,
+        cex_import_count: config.cex_csvs.len(),
+        price_provider: "CoinGecko historical GBP".to_string(),
+        pricing_api_ready,
+        pricing_api_reason,
+        wallets,
+    })
+}
+
+/// Whether a wallet's provider can be synced from the desktop, and why not.
+/// Blockscout is keyless; NearBlocks needs its API key present.
+fn wallet_gate(kind: tinotax_config::ProviderKind, nearblocks_ready: bool) -> (bool, String) {
+    match kind {
+        tinotax_config::ProviderKind::Blockscout => (true, String::new()),
+        tinotax_config::ProviderKind::Nearblocks => {
+            if nearblocks_ready {
+                (true, String::new())
+            } else {
+                (
+                    false,
+                    "Needs NEARBLOCKS_API_KEY (paid plan) — set it, then reload wallets".to_string(),
+                )
+            }
+        }
+    }
+}
+
+fn env_present(name: &str) -> bool {
+    std::env::var(name).ok().filter(|v| !v.is_empty()).is_some()
+}
+
 pub fn desktop_project_status(project: &str) -> Result<ProjectStatusDto> {
     let (paths, config) = crate::open_project(project)?;
     let folders = [
@@ -223,6 +368,213 @@ pub fn desktop_project_paths(project: &str, tax_year: Option<&str>) -> ProjectPa
         tax: tax.to_string(),
         evidence_pack: evidence_pack.to_string(),
     }
+}
+
+pub fn desktop_default_project() -> Option<String> {
+    let names = ["fox-project-lisk", "fox-project"];
+    let cwd = std::env::current_dir()
+        .ok()
+        .and_then(|path| Utf8PathBuf::from_path_buf(path).ok());
+    let manifest_dir = Some(Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+
+    cwd.into_iter()
+        .chain(manifest_dir)
+        .flat_map(|start| {
+            start
+                .ancestors()
+                .map(|ancestor| ancestor.to_path_buf())
+                .collect::<Vec<_>>()
+        })
+        .flat_map(|root| names.iter().map(move |name| root.join(name)))
+        .find(|candidate| candidate.join("project.toml").exists())
+        .map(|path| path.to_string())
+}
+
+pub fn desktop_project_data_view(
+    project: &str,
+    tax_year: Option<&str>,
+) -> Result<ProjectDataViewDto> {
+    let (paths, _) = crate::open_project(project)?;
+    let tax_year = tax_year.unwrap_or("2024-2025");
+    let tax_dir = paths.tax_dir(tax_year);
+    let evidence_dir = paths.evidence_dir(tax_year);
+
+    let mut artifacts = Vec::new();
+    push_file(
+        &mut artifacts,
+        "Input",
+        "Project config",
+        paths.config_file(),
+    )?;
+    push_folder(
+        &mut artifacts,
+        "Input",
+        "Raw wallet and CEX data",
+        paths.raw(),
+    )?;
+    push_file(
+        &mut artifacts,
+        "Input",
+        "HMRC questionnaire answers",
+        paths.questionnaire_file(),
+    )?;
+    push_file(
+        &mut artifacts,
+        "Input",
+        "Opening pools",
+        paths.opening_pools_file(),
+    )?;
+
+    push_file(
+        &mut artifacts,
+        "Staging",
+        "Wallet normalised events",
+        paths.events_jsonl(),
+    )?;
+    push_file(
+        &mut artifacts,
+        "Staging",
+        "CEX normalised events",
+        paths.cex_events_jsonl(),
+    )?;
+    push_file(
+        &mut artifacts,
+        "Staging",
+        "Rejected raw items",
+        paths.rejected_jsonl(),
+    )?;
+    push_file(
+        &mut artifacts,
+        "Staging",
+        "Warnings",
+        paths.warnings_jsonl(),
+    )?;
+
+    push_file(
+        &mut artifacts,
+        "Review",
+        "All review rows",
+        paths.out().join("review_all_transactions.csv"),
+    )?;
+    push_file(
+        &mut artifacts,
+        "Review",
+        "Manual review rows",
+        paths.out().join("manual_review.csv"),
+    )?;
+    push_file(
+        &mut artifacts,
+        "Review",
+        "Review overrides",
+        paths.overrides_jsonl(),
+    )?;
+    push_file(
+        &mut artifacts,
+        "Review",
+        "Reviewed ledger",
+        paths.out().join("reviewed_ledger.csv"),
+    )?;
+
+    push_file(
+        &mut artifacts,
+        "Pricing",
+        "Price observations",
+        paths.price_observations_jsonl(),
+    )?;
+    push_file(
+        &mut artifacts,
+        "Pricing",
+        "CEX price hints",
+        paths.price_hints_jsonl(),
+    )?;
+    push_file(
+        &mut artifacts,
+        "Pricing",
+        "Missing prices",
+        paths.out().join("missing_prices.csv"),
+    )?;
+    push_file(
+        &mut artifacts,
+        "Pricing",
+        "Priced ledger",
+        paths.out().join("priced_ledger.csv"),
+    )?;
+    push_file(
+        &mut artifacts,
+        "Pricing",
+        "Pricing audit",
+        paths.out().join("pricing_audit.csv"),
+    )?;
+
+    push_file(
+        &mut artifacts,
+        "Tax",
+        "Self Assessment summary",
+        tax_dir.join("self_assessment_crypto_summary.csv"),
+    )?;
+    push_file(
+        &mut artifacts,
+        "Tax",
+        "Disposals calculation",
+        tax_dir.join("disposals_calculation.csv"),
+    )?;
+    push_file(
+        &mut artifacts,
+        "Tax",
+        "S104 pool movements",
+        tax_dir.join("s104_pool_movements.csv"),
+    )?;
+    push_file(
+        &mut artifacts,
+        "Tax",
+        "S104 opening and closing pools",
+        tax_dir.join("s104_pool_opening_closing.csv"),
+    )?;
+    push_file(
+        &mut artifacts,
+        "Tax",
+        "Income summary",
+        tax_dir.join("income_summary.csv"),
+    )?;
+    push_file(
+        &mut artifacts,
+        "Tax",
+        "Unresolved tax items",
+        tax_dir.join("unresolved_tax_items.csv"),
+    )?;
+
+    push_folder(
+        &mut artifacts,
+        "Evidence",
+        "Evidence pack",
+        evidence_dir.clone(),
+    )?;
+    push_file(
+        &mut artifacts,
+        "Evidence",
+        "HMRC questions draft",
+        evidence_dir.join("hmrc_questions_draft.md"),
+    )?;
+    push_file(
+        &mut artifacts,
+        "Evidence",
+        "Assumptions and gaps",
+        evidence_dir.join("assumptions_and_gaps.md"),
+    )?;
+    push_file(
+        &mut artifacts,
+        "Evidence",
+        "Questionnaire PDF",
+        paths.out().join("hmrc_questionnaire_responses.pdf"),
+    )?;
+    push_file(
+        &mut artifacts,
+        "Evidence",
+        "Audit manifest",
+        paths.out().join("audit_manifest.json"),
+    )?;
+
+    Ok(ProjectDataViewDto { artifacts })
 }
 
 pub fn load_review_rows(project: &str) -> Result<ReviewRowsResult> {
@@ -324,6 +676,329 @@ pub fn save_review_overrides(
     })
 }
 
+pub fn export_hmrc_questionnaire(
+    project: &str,
+    responses: Vec<HmrcQuestionnaireResponseDraft>,
+) -> Result<HmrcQuestionnaireExportResult> {
+    let (paths, config) = crate::open_project(project)?;
+    fs::create_dir_all(paths.out())?;
+
+    let questionnaire = build_questionnaire_toml(&config, &responses);
+    let questionnaire_path = paths.questionnaire_file();
+    fs::write(&questionnaire_path, questionnaire)
+        .with_context(|| format!("writing {questionnaire_path}"))?;
+
+    let pdf_path = paths.out().join("hmrc_questionnaire_responses.pdf");
+    let pdf = build_questionnaire_pdf(&config.project.name, &responses)?;
+    fs::write(&pdf_path, pdf).with_context(|| format!("writing {pdf_path}"))?;
+
+    Ok(HmrcQuestionnaireExportResult {
+        pdf_path: pdf_path.to_string(),
+        questionnaire_path: questionnaire_path.to_string(),
+    })
+}
+
+fn build_questionnaire_toml(
+    config: &tinotax_config::ProjectConfig,
+    responses: &[HmrcQuestionnaireResponseDraft],
+) -> String {
+    let answer = |id: &str| {
+        responses
+            .iter()
+            .find(|response| response.id == id)
+            .map(|response| response.answer.trim())
+            .unwrap_or("")
+    };
+    let choice = |id: &str| {
+        responses
+            .iter()
+            .find(|response| response.id == id)
+            .and_then(|response| response.choice.as_deref())
+            .and_then(choice_to_bool)
+    };
+
+    let mut text = String::new();
+    text.push_str("# HMRC cryptoasset questionnaire answers exported from TinoTax desktop.\n");
+    text.push_str("# Re-export from the app after changes, then re-run `tinotax pack hmrc`.\n\n");
+
+    text.push_str("[activity]\n");
+    push_key_value(&mut text, "began_on", answer("q1"));
+    push_key_value(&mut text, "notes", "");
+    text.push('\n');
+
+    text.push_str("[source_of_funds]\n");
+    push_key_value(&mut text, "summary", answer("q13"));
+    text.push_str("bank_statement_refs = []\n\n");
+
+    text.push_str("[forks]\n");
+    push_optional_bool(&mut text, "received_forks", choice("q7"));
+    push_key_value(&mut text, "notes", answer("q7"));
+    text.push('\n');
+
+    text.push_str("[airdrops]\n");
+    push_optional_bool(&mut text, "received_airdrops", choice("q8"));
+    push_key_value(&mut text, "notes", answer("q8"));
+    text.push('\n');
+
+    text.push_str("[compensation]\n");
+    push_optional_bool(&mut text, "received_compensation", choice("q9"));
+    push_key_value(&mut text, "notes", answer("q9"));
+    text.push('\n');
+
+    text.push_str("[employment]\n");
+    push_optional_bool(&mut text, "received_crypto_from_employment", choice("q10"));
+    push_key_value(&mut text, "paye_operated", "unknown");
+    push_key_value(&mut text, "notes", answer("q10"));
+    text.push('\n');
+
+    text.push_str("[mining_staking]\n");
+    push_optional_bool(&mut text, "engaged_in_mining_or_staking", choice("q11"));
+    push_key_value(&mut text, "notes", answer("q11"));
+    text.push('\n');
+
+    text.push_str("[goods_services]\n");
+    push_optional_bool(
+        &mut text,
+        "used_crypto_to_buy_goods_or_services",
+        choice("q12"),
+    );
+    push_key_value(&mut text, "notes", answer("q12"));
+    text.push('\n');
+
+    text.push_str("[hmrc_questionnaire]\n");
+    push_key_value(&mut text, "exported_at", &tinotax_store::now_rfc3339());
+    push_key_value(&mut text, "project_name", &config.project.name);
+    push_key_value(&mut text, "period_start", &config.project.period_start);
+    push_key_value(&mut text, "period_end", &config.project.period_end);
+    text.push('\n');
+
+    for response in responses {
+        text.push_str("[[hmrc_questionnaire.responses]]\n");
+        push_key_value(&mut text, "id", &response.id);
+        push_key_value(&mut text, "question", &response.question);
+        if let Some(choice) = clean_optional_string(response.choice.clone()) {
+            push_key_value(&mut text, "choice", &choice);
+        }
+        push_key_value(&mut text, "answer", &response.answer);
+        text.push('\n');
+    }
+
+    text
+}
+
+fn build_questionnaire_pdf(
+    project_name: &str,
+    responses: &[HmrcQuestionnaireResponseDraft],
+) -> Result<Vec<u8>> {
+    let mut lines = Vec::new();
+    lines.push("HMRC Cryptoasset Questionnaire Responses".to_string());
+    lines.push(format!("Project: {}", printable_text(project_name)));
+    lines.push(format!("Exported: {}", tinotax_store::now_rfc3339()));
+    lines.push(String::new());
+
+    for response in responses {
+        lines.extend(wrap_line(
+            &format!(
+                "{} {}",
+                response.id.to_ascii_uppercase(),
+                response.question.trim()
+            ),
+            88,
+        ));
+        if let Some(choice) = clean_optional_string(response.choice.clone()) {
+            lines.extend(wrap_line(&format!("Response: {choice}"), 88));
+        }
+        let answer = if response.answer.trim().is_empty() {
+            "(not answered)"
+        } else {
+            response.answer.trim()
+        };
+        for paragraph in answer.lines() {
+            lines.extend(wrap_line(&format!("Answer: {}", paragraph.trim()), 88));
+        }
+        lines.push(String::new());
+    }
+
+    write_text_pdf(&lines)
+}
+
+fn write_text_pdf(lines: &[String]) -> Result<Vec<u8>> {
+    const LINES_PER_PAGE: usize = 54;
+    let mut pages = Vec::new();
+    let mut current = Vec::new();
+    for line in lines {
+        if current.len() >= LINES_PER_PAGE {
+            pages.push(current);
+            current = Vec::new();
+        }
+        current.push(line.clone());
+    }
+    if !current.is_empty() {
+        pages.push(current);
+    }
+    if pages.is_empty() {
+        pages.push(Vec::new());
+    }
+
+    let page_count = pages.len();
+    let font_object_id = 3 + page_count * 2;
+    let mut objects = Vec::new();
+    objects.push("<< /Type /Catalog /Pages 2 0 R >>".to_string());
+
+    let kids = (0..page_count)
+        .map(|index| format!("{} 0 R", 3 + index * 2))
+        .collect::<Vec<_>>()
+        .join(" ");
+    objects.push(format!(
+        "<< /Type /Pages /Kids [{kids}] /Count {page_count} >>"
+    ));
+
+    for (index, page_lines) in pages.iter().enumerate() {
+        let page_object_id = 3 + index * 2;
+        let content_object_id = page_object_id + 1;
+        objects.push(format!(
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 {font_object_id} 0 R >> >> /Contents {content_object_id} 0 R >>"
+        ));
+        let stream = pdf_stream(page_lines);
+        objects.push(format!(
+            "<< /Length {} >>\nstream\n{}endstream",
+            stream.len(),
+            stream
+        ));
+    }
+
+    objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string());
+
+    let mut pdf = Vec::new();
+    pdf.extend_from_slice(b"%PDF-1.4\n");
+    let mut offsets = Vec::new();
+    for (index, object) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        writeln!(pdf, "{} 0 obj", index + 1)?;
+        pdf.extend_from_slice(object.as_bytes());
+        pdf.extend_from_slice(b"\nendobj\n");
+    }
+
+    let xref_offset = pdf.len();
+    writeln!(pdf, "xref")?;
+    writeln!(pdf, "0 {}", objects.len() + 1)?;
+    writeln!(pdf, "0000000000 65535 f ")?;
+    for offset in offsets {
+        writeln!(pdf, "{offset:010} 00000 n ")?;
+    }
+    writeln!(pdf, "trailer")?;
+    writeln!(pdf, "<< /Size {} /Root 1 0 R >>", objects.len() + 1)?;
+    writeln!(pdf, "startxref")?;
+    writeln!(pdf, "{xref_offset}")?;
+    writeln!(pdf, "%%EOF")?;
+    Ok(pdf)
+}
+
+fn pdf_stream(lines: &[String]) -> String {
+    let mut stream = String::from("BT\n/F1 10 Tf\n14 TL\n50 800 Td\n");
+    for line in lines {
+        stream.push('(');
+        stream.push_str(&escape_pdf_text(&printable_text(line)));
+        stream.push_str(") Tj\nT*\n");
+    }
+    stream.push_str("ET\n");
+    stream
+}
+
+fn wrap_line(text: &str, max_chars: usize) -> Vec<String> {
+    let printable = printable_text(text);
+    if printable.trim().is_empty() {
+        return vec![String::new()];
+    }
+
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in printable.split_whitespace() {
+        let additional = if current.is_empty() { 0 } else { 1 };
+        if !current.is_empty() && current.len() + additional + word.len() > max_chars {
+            lines.push(current);
+            current = String::new();
+        }
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(word);
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
+}
+
+fn printable_text(text: &str) -> String {
+    let mut out = String::new();
+    for ch in text.chars() {
+        match ch {
+            '\r' | '\n' | '\t' => out.push(' '),
+            '\u{00a3}' => out.push_str("GBP"),
+            '\u{2018}' | '\u{2019}' => out.push('\''),
+            '\u{201c}' | '\u{201d}' => out.push('"'),
+            '\u{2013}' | '\u{2014}' => out.push('-'),
+            c if c.is_ascii() && !c.is_control() => out.push(c),
+            _ => out.push('?'),
+        }
+    }
+    out
+}
+
+fn escape_pdf_text(text: &str) -> String {
+    let mut out = String::new();
+    for ch in text.chars() {
+        match ch {
+            '(' => out.push_str("\\("),
+            ')' => out.push_str("\\)"),
+            '\\' => out.push_str("\\\\"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+fn push_key_value(text: &mut String, key: &str, value: &str) {
+    text.push_str(key);
+    text.push_str(" = ");
+    text.push_str(&toml_string(value));
+    text.push('\n');
+}
+
+fn push_optional_bool(text: &mut String, key: &str, value: Option<bool>) {
+    if let Some(value) = value {
+        text.push_str(key);
+        text.push_str(" = ");
+        text.push_str(if value { "true" } else { "false" });
+        text.push('\n');
+    }
+}
+
+fn toml_string(value: &str) -> String {
+    let mut out = String::from("\"");
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn choice_to_bool(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "yes" => Some(true),
+        "no" => Some(false),
+        _ => None,
+    }
+}
+
 fn draft_to_override(
     draft: ReviewOverrideDraft,
     row: usize,
@@ -401,6 +1076,73 @@ fn clean_optional_string(value: Option<String>) -> Option<String> {
         .filter(|text| !text.is_empty())
 }
 
+fn push_folder(
+    artifacts: &mut Vec<DataArtifactDto>,
+    stage: &str,
+    label: &str,
+    path: Utf8PathBuf,
+) -> Result<()> {
+    let (item_count, bytes) = if path.exists() {
+        dir_stats(&path)?
+    } else {
+        (0, 0)
+    };
+    artifacts.push(DataArtifactDto {
+        stage: stage.to_string(),
+        label: label.to_string(),
+        kind: "folder".to_string(),
+        path: path.to_string(),
+        exists: path.exists(),
+        bytes,
+        item_count,
+        item_label: "files".to_string(),
+    });
+    Ok(())
+}
+
+fn push_file(
+    artifacts: &mut Vec<DataArtifactDto>,
+    stage: &str,
+    label: &str,
+    path: Utf8PathBuf,
+) -> Result<()> {
+    let exists = path.exists();
+    let bytes = if exists {
+        fs::metadata(&path)
+            .with_context(|| format!("reading metadata for {path}"))?
+            .len()
+    } else {
+        0
+    };
+    let item_count = if exists && is_line_countable(&path) {
+        count_non_empty_lines(&path)?
+    } else {
+        0
+    };
+    artifacts.push(DataArtifactDto {
+        stage: stage.to_string(),
+        label: label.to_string(),
+        kind: "file".to_string(),
+        path: path.to_string(),
+        exists,
+        bytes,
+        item_count,
+        item_label: if is_line_countable(&path) {
+            "lines".to_string()
+        } else {
+            String::new()
+        },
+    });
+    Ok(())
+}
+
+fn is_line_countable(path: &Utf8Path) -> bool {
+    matches!(
+        path.extension().unwrap_or_default(),
+        "csv" | "json" | "jsonl" | "md" | "toml" | "txt"
+    )
+}
+
 fn folder_status(label: &str, path: &Utf8Path) -> Result<FolderStatusDto> {
     let (file_count, bytes) = if path.exists() {
         dir_stats(path)?
@@ -440,6 +1182,13 @@ fn count_non_empty_lines(path: &Utf8Path) -> Result<u64> {
     Ok(text.lines().filter(|line| !line.trim().is_empty()).count() as u64)
 }
 
+fn provider_kind_label(kind: tinotax_config::ProviderKind) -> &'static str {
+    match kind {
+        tinotax_config::ProviderKind::Blockscout => "blockscout",
+        tinotax_config::ProviderKind::Nearblocks => "nearblocks",
+    }
+}
+
 const TAX_EVENT_TYPES: &[&str] = &[
     "acquisition",
     "disposal",
@@ -474,6 +1223,21 @@ mod tests {
 
     fn known_ids() -> BTreeSet<String> {
         BTreeSet::from(["evt_1".to_string()])
+    }
+
+    #[test]
+    fn wallet_gate_is_driven_by_provider_and_key() {
+        use tinotax_config::ProviderKind;
+
+        // Blockscout (Lisk, IOTA EVM) is keyless: always enabled.
+        assert_eq!(wallet_gate(ProviderKind::Blockscout, false), (true, String::new()));
+        assert_eq!(wallet_gate(ProviderKind::Blockscout, true), (true, String::new()));
+
+        // NearBlocks is gated on its key.
+        let (enabled, reason) = wallet_gate(ProviderKind::Nearblocks, false);
+        assert!(!enabled);
+        assert!(reason.contains("NEARBLOCKS_API_KEY"));
+        assert_eq!(wallet_gate(ProviderKind::Nearblocks, true), (true, String::new()));
     }
 
     #[test]
@@ -546,6 +1310,45 @@ mod tests {
             Err(err) => err,
         };
         assert!(err.to_string().contains("user_quantity"));
+        Ok(())
+    }
+
+    #[test]
+    fn hmrc_questionnaire_formats_toml_and_pdf() -> Result<(), Box<dyn Error>> {
+        let config = tinotax_config::ProjectConfig {
+            project: tinotax_config::ProjectSection {
+                name: "demo".into(),
+                base_currency: "GBP".into(),
+                period_start: "2017-01-01T00:00:00Z".into(),
+                period_end: "2025-04-05T23:59:59Z".into(),
+            },
+            wallets: Vec::new(),
+            providers: Default::default(),
+            cex_csvs: Vec::new(),
+        };
+        let responses = vec![
+            HmrcQuestionnaireResponseDraft {
+                id: "q1".into(),
+                question: "When did you begin?".into(),
+                answer: "2017".into(),
+                choice: None,
+            },
+            HmrcQuestionnaireResponseDraft {
+                id: "q7".into(),
+                question: "Forks?".into(),
+                answer: "No forks.".into(),
+                choice: Some("no".into()),
+            },
+        ];
+
+        let toml = build_questionnaire_toml(&config, &responses);
+        assert!(toml.contains("began_on = \"2017\""));
+        assert!(toml.contains("received_forks = false"));
+        assert!(toml.contains("[[hmrc_questionnaire.responses]]"));
+
+        let pdf = build_questionnaire_pdf("demo", &responses)?;
+        assert!(pdf.starts_with(b"%PDF-1.4"));
+        assert!(String::from_utf8_lossy(&pdf).contains("xref"));
         Ok(())
     }
 }

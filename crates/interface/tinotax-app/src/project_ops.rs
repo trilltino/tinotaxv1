@@ -4,12 +4,13 @@
 //! do not own business logic; they make project state easier to inspect and
 //! repeat safely from the CLI.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 
 use anyhow::{bail, Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::Serialize;
+use tinotax_config::ProjectConfig;
 use tinotax_store::ProjectPaths;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -183,11 +184,13 @@ pub fn project_clean_confirm(
 }
 
 pub async fn workflow_startup(config: &str, project: &str, resume: bool) -> Result<()> {
+    let config_path = crate::resolve_config_path(config)?;
+
     println!("== 1/9 preflight ==");
-    crate::preflight(config, project)?;
+    crate::preflight(config_path.as_str(), project)?;
 
     println!("\n== 2/9 project init ==");
-    crate::project_init(config, project)?;
+    crate::project_init(config_path.as_str(), project)?;
 
     println!("\n== 3/9 fetch ==");
     crate::fetch_project(project, resume).await?;
@@ -213,6 +216,113 @@ pub async fn workflow_startup(config: &str, project: &str, resume: bool) -> Resu
 
     println!("\nstartup workflow complete: {project}");
     Ok(())
+}
+
+pub async fn workflow_sync_wallets(
+    config: &str,
+    project: &str,
+    wallet_ids: &[String],
+    resume: bool,
+) -> Result<()> {
+    println!("== 1/8 load selected wallets ==");
+    let config_path = crate::resolve_config_path(config)?;
+    let config = ProjectConfig::load(&config_path)
+        .with_context(|| format!("loading wallet config {config_path}"))?;
+    let filtered = selected_lisk_config(config, wallet_ids)?;
+
+    let paths = ProjectPaths::new(Utf8PathBuf::from(project));
+    paths.init()?;
+    let filtered_text =
+        toml::to_string_pretty(&filtered).context("serialising selected wallet config")?;
+    fs::write(paths.config_file(), filtered_text)
+        .with_context(|| format!("writing {}", paths.config_file()))?;
+
+    println!("\n== 2/8 preflight ==");
+    crate::preflight(paths.config_file().as_str(), project)?;
+
+    println!("\n== 3/8 fetch selected wallet API ==");
+    crate::fetch_project(project, resume).await?;
+
+    println!("\n== 4/8 import CEX ==");
+    crate::import_cex(project)?;
+
+    println!("\n== 5/8 normalise ==");
+    crate::normalise_project(project)?;
+
+    println!("\n== 6/8 diagnose ==");
+    crate::diagnose_project(project)?;
+
+    println!("\n== 7/8 review exports ==");
+    crate::export_review(project)?;
+    crate::export_review_all(project)?;
+
+    println!("\n== 8/8 reports ==");
+    crate::export_reports(project)?;
+
+    println!("\nwallet sync complete: {project}");
+    Ok(())
+}
+
+fn selected_lisk_config(mut config: ProjectConfig, wallet_ids: &[String]) -> Result<ProjectConfig> {
+    if wallet_ids.is_empty() {
+        bail!("select at least one wallet");
+    }
+
+    let requested = wallet_ids
+        .iter()
+        .map(|id| id.trim())
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>();
+    if requested.is_empty() {
+        bail!("select at least one wallet");
+    }
+
+    let known = config
+        .wallets
+        .iter()
+        .map(|wallet| wallet.id.clone())
+        .collect::<BTreeSet<_>>();
+    let unknown = requested
+        .difference(&known)
+        .cloned()
+        .collect::<Vec<String>>();
+    if !unknown.is_empty() {
+        bail!("unknown selected wallet id(s): {}", unknown.join(", "));
+    }
+
+    let mut rejected = Vec::new();
+    config.wallets.retain(|wallet| {
+        if !requested.contains(&wallet.id) {
+            return false;
+        }
+        if wallet.chain == "lisk-evm" {
+            true
+        } else {
+            rejected.push(format!("{} ({})", wallet.id, wallet.chain));
+            false
+        }
+    });
+    if !rejected.is_empty() {
+        bail!(
+            "only Lisk wallets are enabled in the desktop sync right now; disabled selection(s): {}",
+            rejected.join(", ")
+        );
+    }
+    if config.wallets.is_empty() {
+        bail!("no enabled Lisk wallet selected");
+    }
+
+    let used_providers = config
+        .wallets
+        .iter()
+        .map(|wallet| wallet.provider.clone())
+        .collect::<BTreeSet<_>>();
+    config
+        .providers
+        .retain(|name, _provider| used_providers.contains(name));
+    config.validate()?;
+    Ok(config)
 }
 
 pub fn workflow_refresh_review(project: &str) -> Result<()> {
@@ -512,6 +622,36 @@ kind = "nearblocks"
 base_url = "https://api.nearblocks.io/v1"
 "#;
 
+    const MULTI_WALLET_TOML: &str = r#"
+[project]
+name = "wallet-select-test"
+base_currency = "GBP"
+period_start = "2017-01-01T00:00:00Z"
+period_end = "2025-04-05T23:59:59Z"
+
+[[wallets]]
+id = "lisk_main"
+name = "Lisk wallet"
+chain = "lisk-evm"
+address = "0x1111111111111111111111111111111111111111"
+provider = "lisk_blockscout"
+
+[[wallets]]
+id = "near_main"
+name = "NEAR wallet"
+chain = "near"
+address = "test.near"
+provider = "nearblocks"
+
+[providers.lisk_blockscout]
+kind = "blockscout"
+base_url = "https://blockscout.lisk.com/api/v2"
+
+[providers.nearblocks]
+kind = "nearblocks"
+base_url = "https://api.nearblocks.io/v1"
+"#;
+
     fn project_paths() -> Result<(tempfile::TempDir, ProjectPaths), Box<dyn Error>> {
         let tmp = tempfile::tempdir()?;
         let root = Utf8PathBuf::from_path_buf(tmp.path().join("project"))
@@ -629,6 +769,30 @@ base_url = "https://api.nearblocks.io/v1"
         assert!(other_tax.exists());
         assert!(!selected_pack.exists());
         assert!(other_pack.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn selected_lisk_config_keeps_only_enabled_wallet_and_provider() -> Result<(), Box<dyn Error>> {
+        let config: ProjectConfig = toml::from_str(MULTI_WALLET_TOML)?;
+        let filtered = selected_lisk_config(config, &["lisk_main".to_string()])?;
+
+        assert_eq!(filtered.wallets.len(), 1);
+        assert_eq!(filtered.wallets[0].id, "lisk_main");
+        assert!(filtered.providers.contains_key("lisk_blockscout"));
+        assert!(!filtered.providers.contains_key("nearblocks"));
+        Ok(())
+    }
+
+    #[test]
+    fn selected_lisk_config_rejects_disabled_wallets() -> Result<(), Box<dyn Error>> {
+        let config: ProjectConfig = toml::from_str(MULTI_WALLET_TOML)?;
+        let err = match selected_lisk_config(config, &["near_main".to_string()]) {
+            Ok(_) => return Err(std::io::Error::other("expected disabled-wallet error").into()),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("only Lisk wallets are enabled"));
         Ok(())
     }
 }

@@ -65,12 +65,47 @@ async fn main() -> Result<()> {
                 } => {
                     tinotax_app::workflow_finalize_year(&project.project, &tax_year, allow_unpriced)
                 }
+                ProjectWorkflowCommand::Prepare {
+                    config,
+                    project,
+                    wallet,
+                    tax_year,
+                    resume,
+                    fetch_prices,
+                } => {
+                    // CLI progress: print each step to stdout.
+                    let progress = |msg: &str| println!("prepare: {msg}");
+                    tinotax_app::workflow_prepare(
+                        &config,
+                        &project,
+                        &wallet,
+                        &tax_year,
+                        resume,
+                        fetch_prices,
+                        true,
+                        &progress,
+                        tinotax_app::FetchHooks::default(),
+                    )
+                    .await
+                }
             },
         },
 
-        Command::Fetch { project, resume } => tinotax_app::fetch_project(&project.project, resume)
+        Command::Fetch {
+            project,
+            resume,
+            wallet,
+        } => {
+            let only = if wallet.is_empty() { None } else { Some(wallet) };
+            tinotax_app::fetch_project_wallets(
+                &project.project,
+                resume,
+                only.as_deref(),
+                tinotax_app::FetchHooks::default(),
+            )
             .await
-            .map(|_| ()),
+            .map(|_| ())
+        }
 
         Command::ImportCex { project } => tinotax_app::import_cex(&project.project),
 
@@ -95,6 +130,14 @@ async fn main() -> Result<()> {
             }
             ReviewCommand::Apply { project, file } => {
                 tinotax_app::apply_review(&project.project, &file).map(|_| ())
+            }
+            ReviewCommand::AutoClassify { project } => {
+                let result = tinotax_app::auto_classify_contract_calls(&project.project)?;
+                println!(
+                    "auto-classified {} zero-value contract calls as ignore ({})",
+                    result.appended, result.change_log
+                );
+                Ok(())
             }
         },
 

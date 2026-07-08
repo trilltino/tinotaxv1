@@ -13,9 +13,12 @@ use camino::{Utf8Path, Utf8PathBuf};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use tinotax_core::{
-    uk_tax_year, Chain, PriceSource, ReviewAction, ReviewOverride, SourceKind, TaxEventType,
+    uk_tax_year, Chain, EventType, NormalisedEvent, PriceSource, ReviewAction, ReviewOverride,
+    SourceKind, TaxEventType,
 };
 use tinotax_store::{JsonlWriter, ProjectPaths};
+
+use crate::event_cache::load_events_cached;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -92,6 +95,68 @@ pub struct DataArtifactDto {
 #[serde(rename_all = "camelCase")]
 pub struct ReviewRowsResult {
     pub rows: Vec<ReviewRowDto>,
+    pub tax_event_types: Vec<String>,
+    pub price_sources: Vec<String>,
+}
+
+/// A filtered, paginated request for review rows.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewQuery {
+    #[serde(default)]
+    pub offset: usize,
+    #[serde(default)]
+    pub limit: usize,
+    #[serde(default)]
+    pub needs_review_only: bool,
+    #[serde(default)]
+    pub unknown_only: bool,
+    /// Rows still wanting a human decision: flagged OR effective type unknown.
+    #[serde(default)]
+    pub needs_attention_only: bool,
+    #[serde(default)]
+    pub tax_year: Option<String>,
+    #[serde(default)]
+    pub asset: Option<String>,
+    #[serde(default)]
+    pub chain: Option<String>,
+    /// Detected event type (fee, contract_call, token_transfer, …).
+    #[serde(default)]
+    pub event_type: Option<String>,
+    /// Effective tax type (user override if set, else the machine suggestion).
+    #[serde(default)]
+    pub tax_type: Option<String>,
+    #[serde(default)]
+    pub text: Option<String>,
+    /// Column to sort by: `time` (default), `asset`, `amount`, `type`,
+    /// `taxType`, `chain`.
+    #[serde(default)]
+    pub sort_by: Option<String>,
+    #[serde(default)]
+    pub sort_desc: bool,
+}
+
+/// One page of review rows plus the facets the UI needs to render filters,
+/// counts and pagination without loading the whole project.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewPage {
+    pub rows: Vec<ReviewRowDto>,
+    pub offset: usize,
+    pub limit: usize,
+    /// Rows matching the current filter (across the whole project).
+    pub total: usize,
+    /// All rows in the project, before filtering.
+    pub grand_total: usize,
+    pub needs_review_count: usize,
+    /// Rows wanting a human decision (flagged OR effective type unknown).
+    pub needs_attention_count: usize,
+    /// Zero-value contract calls still eligible for bulk-ignore.
+    pub ignorable_contract_calls: usize,
+    pub assets: Vec<String>,
+    pub tax_years: Vec<String>,
+    pub chains: Vec<String>,
+    pub event_types: Vec<String>,
     pub tax_event_types: Vec<String>,
     pub price_sources: Vec<String>,
 }
@@ -371,23 +436,11 @@ pub fn desktop_project_paths(project: &str, tax_year: Option<&str>) -> ProjectPa
 }
 
 pub fn desktop_default_project() -> Option<String> {
-    let names = ["fox-project-lisk", "fox-project"];
-    let cwd = std::env::current_dir()
-        .ok()
-        .and_then(|path| Utf8PathBuf::from_path_buf(path).ok());
-    let manifest_dir = Some(Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR")));
-
-    cwd.into_iter()
-        .chain(manifest_dir)
-        .flat_map(|start| {
-            start
-                .ancestors()
-                .map(|ancestor| ancestor.to_path_buf())
-                .collect::<Vec<_>>()
-        })
-        .flat_map(|root| names.iter().map(move |name| root.join(name)))
-        .find(|candidate| candidate.join("project.toml").exists())
-        .map(|path| path.to_string())
+    // No auto-guessed default project. Returning users reopen via the Recent
+    // projects list (persisted client-side); first-run users create or open one.
+    // (Previously this searched for hardcoded `fox-project-*` folders, which
+    // wrongly auto-opened the developer's project and broke test isolation.)
+    None
 }
 
 pub fn desktop_project_data_view(
@@ -558,8 +611,14 @@ pub fn desktop_project_data_view(
     push_file(
         &mut artifacts,
         "Evidence",
-        "Assumptions and gaps",
-        evidence_dir.join("assumptions_and_gaps.md"),
+        "Assumptions and limitations",
+        evidence_dir.join("assumptions_and_limitations.md"),
+    )?;
+    push_file(
+        &mut artifacts,
+        "Evidence",
+        "Counterparties (Q5 protocols)",
+        evidence_dir.join("counterparties.csv"),
     )?;
     push_file(
         &mut artifacts,
@@ -577,68 +636,333 @@ pub fn desktop_project_data_view(
     Ok(ProjectDataViewDto { artifacts })
 }
 
+/// Build one review row DTO from an event and its latest override (if any).
+fn build_review_row(event: &NormalisedEvent, o: Option<&ReviewOverride>) -> ReviewRowDto {
+    let opt_dec = |d: Option<Decimal>| d.map(|v| v.to_string()).unwrap_or_default();
+    let platform = match event.source_kind {
+        SourceKind::CexCsv => event.chain.as_str(),
+        SourceKind::Wallet | SourceKind::Manual => "",
+    };
+    ReviewRowDto {
+        event_id: event.event_id.clone(),
+        timestamp: event.timestamp.clone(),
+        tax_year: uk_tax_year(&event.timestamp).unwrap_or_default(),
+        source_id: event.source_id.clone(),
+        platform: platform.to_string(),
+        chain: event.chain.clone(),
+        wallet: event.wallet.clone(),
+        tx_hash: event.tx_hash.clone(),
+        detected_event_type: event.event_type.as_str().to_string(),
+        detected_direction: event.direction.as_str().to_string(),
+        asset_symbol: event.asset_symbol.clone(),
+        asset_contract: event.asset_contract.clone().unwrap_or_default(),
+        amount: event.amount.to_string(),
+        fee_asset: event.fee_asset.clone().unwrap_or_default(),
+        fee_amount: opt_dec(event.fee_amount),
+        from_address: event.from_address.clone().unwrap_or_default(),
+        to_address: event.to_address.clone().unwrap_or_default(),
+        confidence: event.confidence.as_str().to_string(),
+        needs_review: event.needs_review,
+        review_reasons: event.review_reasons.join("; "),
+        suggested_tax_type: TaxEventType::suggest(event.event_type, event.direction)
+            .as_str()
+            .to_string(),
+        user_tax_type: o
+            .and_then(|o| o.user_tax_type)
+            .map(|t| t.as_str().to_string())
+            .unwrap_or_default(),
+        user_asset_symbol: o.and_then(|o| o.user_asset_symbol.clone()).unwrap_or_default(),
+        user_quantity: opt_dec(o.and_then(|o| o.user_quantity)),
+        user_proceeds_gbp: opt_dec(o.and_then(|o| o.user_proceeds_gbp)),
+        user_cost_gbp: opt_dec(o.and_then(|o| o.user_cost_gbp)),
+        user_income_gbp: opt_dec(o.and_then(|o| o.user_income_gbp)),
+        user_fee_gbp: opt_dec(o.and_then(|o| o.user_fee_gbp)),
+        user_price_source: o.and_then(|o| o.user_price_source.clone()).unwrap_or_default(),
+        user_note: o.and_then(|o| o.user_note.clone()).unwrap_or_default(),
+        raw_file: event.source_ref.raw_file.clone(),
+        json_path: event.source_ref.json_path.clone().unwrap_or_default(),
+    }
+}
+
+/// The tax type that currently applies to an event: the user's override if set,
+/// otherwise the machine suggestion. Mirrors the frontend `effectiveTaxType`.
+fn effective_tax_type(event: &NormalisedEvent, o: Option<&ReviewOverride>) -> TaxEventType {
+    o.and_then(|o| o.user_tax_type)
+        .unwrap_or_else(|| TaxEventType::suggest(event.event_type, event.direction))
+}
+
+/// A zero-value contract call with no user tax decision yet — the bulk-ignore
+/// candidate (non-taxable envelope: no asset moved).
+fn is_ignorable_contract_call(event: &NormalisedEvent, o: Option<&ReviewOverride>) -> bool {
+    matches!(event.event_type, EventType::ContractCall)
+        && event.amount.is_zero()
+        && o.and_then(|o| o.user_tax_type).is_none()
+}
+
+/// Rows that still want a human decision: not yet given a tax type by the user,
+/// and either machine-flagged or with an effective type still `unknown`. A row
+/// the user has already classified (even to `ignore`) no longer needs attention.
+fn needs_attention(event: &NormalisedEvent, o: Option<&ReviewOverride>) -> bool {
+    if o.and_then(|o| o.user_tax_type).is_some() {
+        return false;
+    }
+    event.needs_review || effective_tax_type(event, o) == TaxEventType::Unknown
+}
+
+fn matches_query(event: &NormalisedEvent, o: Option<&ReviewOverride>, q: &ReviewQuery) -> bool {
+    if q.needs_review_only && !event.needs_review {
+        return false;
+    }
+    if q.unknown_only && effective_tax_type(event, o) != TaxEventType::Unknown {
+        return false;
+    }
+    if q.needs_attention_only && !needs_attention(event, o) {
+        return false;
+    }
+    if let Some(year) = q.tax_year.as_deref().filter(|y| !y.is_empty()) {
+        if uk_tax_year(&event.timestamp).unwrap_or_default() != year {
+            return false;
+        }
+    }
+    if let Some(asset) = q.asset.as_deref().filter(|a| !a.is_empty()) {
+        if event.asset_symbol != asset {
+            return false;
+        }
+    }
+    if let Some(chain) = q.chain.as_deref().filter(|c| !c.is_empty()) {
+        if event.chain != chain {
+            return false;
+        }
+    }
+    if let Some(event_type) = q.event_type.as_deref().filter(|e| !e.is_empty()) {
+        if event.event_type.as_str() != event_type {
+            return false;
+        }
+    }
+    if let Some(tax_type) = q.tax_type.as_deref().filter(|t| !t.is_empty()) {
+        if effective_tax_type(event, o).as_str() != tax_type {
+            return false;
+        }
+    }
+    if let Some(text) = q.text.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+        let needle = text.to_lowercase();
+        let note = o.and_then(|o| o.user_note.clone()).unwrap_or_default();
+        let hay = [
+            event.event_id.as_str(),
+            event.tx_hash.as_str(),
+            event.source_id.as_str(),
+            event.asset_symbol.as_str(),
+            event.wallet.as_str(),
+            &event.review_reasons.join("; "),
+            note.as_str(),
+        ]
+        .join(" ")
+        .to_lowercase();
+        if !hay.contains(&needle) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Full (unpaginated) review rows — retained for the CLI/tests. The desktop app
+/// uses [`load_review_page`] to avoid shipping every row over IPC.
 pub fn load_review_rows(project: &str) -> Result<ReviewRowsResult> {
     let (paths, _) = crate::open_project(project)?;
-    let events = tinotax_review::load_all_events(&paths)?;
+    let events = load_events_cached(&paths)?;
     let overrides = tinotax_review::load_latest_overrides(&paths)?;
-    let mut rows = Vec::with_capacity(events.len());
-    let opt_dec = |d: Option<Decimal>| d.map(|v| v.to_string()).unwrap_or_default();
-
-    for event in &events {
-        let o = overrides.get(&event.event_id);
-        let platform = match event.source_kind {
-            SourceKind::CexCsv => event.chain.as_str(),
-            SourceKind::Wallet | SourceKind::Manual => "",
-        };
-        rows.push(ReviewRowDto {
-            event_id: event.event_id.clone(),
-            timestamp: event.timestamp.clone(),
-            tax_year: uk_tax_year(&event.timestamp).unwrap_or_default(),
-            source_id: event.source_id.clone(),
-            platform: platform.to_string(),
-            chain: event.chain.clone(),
-            wallet: event.wallet.clone(),
-            tx_hash: event.tx_hash.clone(),
-            detected_event_type: event.event_type.as_str().to_string(),
-            detected_direction: event.direction.as_str().to_string(),
-            asset_symbol: event.asset_symbol.clone(),
-            asset_contract: event.asset_contract.clone().unwrap_or_default(),
-            amount: event.amount.to_string(),
-            fee_asset: event.fee_asset.clone().unwrap_or_default(),
-            fee_amount: opt_dec(event.fee_amount),
-            from_address: event.from_address.clone().unwrap_or_default(),
-            to_address: event.to_address.clone().unwrap_or_default(),
-            confidence: event.confidence.as_str().to_string(),
-            needs_review: event.needs_review,
-            review_reasons: event.review_reasons.join("; "),
-            suggested_tax_type: TaxEventType::suggest(event.event_type, event.direction)
-                .as_str()
-                .to_string(),
-            user_tax_type: o
-                .and_then(|o| o.user_tax_type)
-                .map(|t| t.as_str().to_string())
-                .unwrap_or_default(),
-            user_asset_symbol: o
-                .and_then(|o| o.user_asset_symbol.clone())
-                .unwrap_or_default(),
-            user_quantity: opt_dec(o.and_then(|o| o.user_quantity)),
-            user_proceeds_gbp: opt_dec(o.and_then(|o| o.user_proceeds_gbp)),
-            user_cost_gbp: opt_dec(o.and_then(|o| o.user_cost_gbp)),
-            user_income_gbp: opt_dec(o.and_then(|o| o.user_income_gbp)),
-            user_fee_gbp: opt_dec(o.and_then(|o| o.user_fee_gbp)),
-            user_price_source: o
-                .and_then(|o| o.user_price_source.clone())
-                .unwrap_or_default(),
-            user_note: o.and_then(|o| o.user_note.clone()).unwrap_or_default(),
-            raw_file: event.source_ref.raw_file.clone(),
-            json_path: event.source_ref.json_path.clone().unwrap_or_default(),
-        });
-    }
-
+    let rows = events
+        .iter()
+        .map(|event| build_review_row(event, overrides.get(&event.event_id)))
+        .collect();
     Ok(ReviewRowsResult {
         rows,
         tax_event_types: TAX_EVENT_TYPES.iter().map(|s| (*s).to_string()).collect(),
         price_sources: PRICE_SOURCES.iter().map(|s| (*s).to_string()).collect(),
+    })
+}
+
+/// One filtered, paginated page of review rows plus the facets the UI needs
+/// (distinct assets/years, counts). Only the page's rows are materialised as
+/// DTOs, so the IPC payload is bounded regardless of project size.
+pub fn load_review_page(project: &str, query: &ReviewQuery) -> Result<ReviewPage> {
+    let (paths, _) = crate::open_project(project)?;
+    let events = load_events_cached(&paths)?;
+    let overrides = tinotax_review::load_latest_overrides(&paths)?;
+    let limit = query.limit.clamp(1, 2000);
+
+    let mut assets: BTreeSet<String> = BTreeSet::new();
+    let mut tax_years: BTreeSet<String> = BTreeSet::new();
+    let mut chains: BTreeSet<String> = BTreeSet::new();
+    let mut event_types: BTreeSet<String> = BTreeSet::new();
+    let mut needs_review_count = 0usize;
+    let mut needs_attention_count = 0usize;
+    let mut ignorable_contract_calls = 0usize;
+    let mut matched: Vec<usize> = Vec::new();
+
+    for (index, event) in events.iter().enumerate() {
+        let o = overrides.get(&event.event_id);
+        if !event.asset_symbol.is_empty() {
+            assets.insert(event.asset_symbol.clone());
+        }
+        if let Ok(year) = uk_tax_year(&event.timestamp) {
+            if !year.is_empty() {
+                tax_years.insert(year);
+            }
+        }
+        if !event.chain.is_empty() {
+            chains.insert(event.chain.clone());
+        }
+        event_types.insert(event.event_type.as_str().to_string());
+        if event.needs_review {
+            needs_review_count += 1;
+        }
+        if needs_attention(event, o) {
+            needs_attention_count += 1;
+        }
+        if is_ignorable_contract_call(event, o) {
+            ignorable_contract_calls += 1;
+        }
+        if matches_query(event, o, query) {
+            matched.push(index);
+        }
+    }
+
+    // Sort the matched set before paging so ordering is stable across pages.
+    // `time` (the default) is already the load order, so only re-sort otherwise.
+    let ev = |i: usize| &events[i];
+    match query.sort_by.as_deref() {
+        Some("asset") => matched.sort_by(|&a, &b| ev(a).asset_symbol.cmp(&ev(b).asset_symbol)),
+        Some("amount") => matched.sort_by(|&a, &b| ev(a).amount.cmp(&ev(b).amount)),
+        Some("type") => {
+            matched.sort_by(|&a, &b| ev(a).event_type.as_str().cmp(ev(b).event_type.as_str()))
+        }
+        Some("chain") => matched.sort_by(|&a, &b| ev(a).chain.cmp(&ev(b).chain)),
+        Some("taxType") => matched.sort_by(|&a, &b| {
+            let ta = effective_tax_type(ev(a), overrides.get(&ev(a).event_id));
+            let tb = effective_tax_type(ev(b), overrides.get(&ev(b).event_id));
+            ta.as_str().cmp(tb.as_str())
+        }),
+        _ => matched.sort_by(|&a, &b| ev(a).timestamp.cmp(&ev(b).timestamp)),
+    }
+    if query.sort_desc {
+        matched.reverse();
+    }
+
+    let total = matched.len();
+    let rows = matched
+        .into_iter()
+        .skip(query.offset)
+        .take(limit)
+        .map(|index| {
+            let event = &events[index];
+            build_review_row(event, overrides.get(&event.event_id))
+        })
+        .collect();
+
+    Ok(ReviewPage {
+        rows,
+        offset: query.offset,
+        limit,
+        total,
+        grand_total: events.len(),
+        needs_review_count,
+        needs_attention_count,
+        ignorable_contract_calls,
+        assets: assets.into_iter().collect(),
+        tax_years: tax_years.into_iter().collect(),
+        chains: chains.into_iter().collect(),
+        event_types: event_types.into_iter().collect(),
+        tax_event_types: TAX_EVENT_TYPES.iter().map(|s| (*s).to_string()).collect(),
+        price_sources: PRICE_SOURCES.iter().map(|s| (*s).to_string()).collect(),
+    })
+}
+
+/// Set `tax_type` on every row matching `query` (append-only overrides). Powers
+/// the "set all matching rows" bulk action. Returns how many were written.
+pub fn bulk_set_review(project: &str, query: &ReviewQuery, tax_type: &str) -> Result<SaveReviewResult> {
+    let parsed: TaxEventType = tax_type
+        .parse()
+        .with_context(|| format!("unknown tax type {tax_type:?}"))?;
+    let (paths, _) = crate::open_project(project)?;
+    let events = load_events_cached(&paths)?;
+    let overrides = tinotax_review::load_latest_overrides(&paths)?;
+
+    let mut records = Vec::new();
+    for event in events.iter() {
+        let o = overrides.get(&event.event_id);
+        if matches_query(event, o, query) {
+            records.push(ReviewOverride {
+                event_id: event.event_id.clone(),
+                user_action: None,
+                user_tax_type: Some(parsed),
+                user_asset_symbol: None,
+                user_quantity: None,
+                user_proceeds_gbp: None,
+                user_cost_gbp: None,
+                user_income_gbp: None,
+                user_fee_gbp: None,
+                user_price_source: None,
+                user_note: Some(format!("bulk: set to {} via review filter", parsed.as_str())),
+                applied_at: tinotax_store::now_rfc3339(),
+                source_file: Some("desktop_bulk_review".to_string()),
+            });
+        }
+    }
+
+    fs::create_dir_all(paths.staging())?;
+    let mut writer = JsonlWriter::append(&paths.overrides_jsonl())?;
+    for item in &records {
+        writer.write(item)?;
+    }
+    let appended = writer.finish()?;
+    tinotax_review::write_change_log(&paths).context("regenerating out/change_log.csv")?;
+    Ok(SaveReviewResult {
+        appended,
+        change_log: paths.out().join("change_log.csv").to_string(),
+    })
+}
+
+/// Bulk-classify every zero-value contract call as `ignore` (non-taxable),
+/// writing auditable override records. Server-side so it never ships the whole
+/// event set to the client. Returns how many overrides were appended.
+pub fn auto_classify_contract_calls(project: &str) -> Result<SaveReviewResult> {
+    let (paths, _) = crate::open_project(project)?;
+    let events = load_events_cached(&paths)?;
+    let overrides = tinotax_review::load_latest_overrides(&paths)?;
+
+    let mut records = Vec::new();
+    for event in events.iter() {
+        if is_ignorable_contract_call(event, overrides.get(&event.event_id)) {
+            records.push(ReviewOverride {
+                event_id: event.event_id.clone(),
+                user_action: None,
+                user_tax_type: Some(TaxEventType::Ignore),
+                user_asset_symbol: None,
+                user_quantity: None,
+                user_proceeds_gbp: None,
+                user_cost_gbp: None,
+                user_income_gbp: None,
+                user_fee_gbp: None,
+                user_price_source: None,
+                user_note: Some("auto: zero-value contract call (non-taxable)".to_string()),
+                applied_at: tinotax_store::now_rfc3339(),
+                source_file: Some("desktop_auto_classify".to_string()),
+            });
+        }
+    }
+
+    fs::create_dir_all(paths.staging())?;
+    let mut writer = JsonlWriter::append(&paths.overrides_jsonl())?;
+    for item in &records {
+        writer.write(item)?;
+    }
+    let appended = writer.finish()?;
+    tinotax_review::write_change_log(&paths).context("regenerating out/change_log.csv")?;
+
+    Ok(SaveReviewResult {
+        appended,
+        change_log: paths.out().join("change_log.csv").to_string(),
     })
 }
 

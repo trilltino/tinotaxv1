@@ -19,7 +19,7 @@ pub struct FetchReport {
     pub resumed: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct FetchContext<'a> {
     pub project_dir: &'a Utf8Path,
     pub resume: bool,
@@ -27,6 +27,36 @@ pub struct FetchContext<'a> {
     /// items pass this point (project period end plus any lookahead the tax
     /// rules need). `None` fetches the full history.
     pub stop_after_ns: Option<u64>,
+    /// Called after each page is cached: `(endpoint, page, cumulative_items)`.
+    /// Lets the app surface live fetch progress.
+    pub on_page: Option<&'a (dyn Fn(&str, u64, u64) + Sync)>,
+    /// Polled before each page; returning `true` aborts the fetch. The raw
+    /// cache stays resumable (the cursor is already persisted), so a later run
+    /// picks up where this one stopped.
+    pub cancelled: Option<&'a (dyn Fn() -> bool + Sync)>,
+}
+
+impl<'a> FetchContext<'a> {
+    /// A context with no progress/cancel hooks (the common case).
+    pub fn new(project_dir: &'a Utf8Path, resume: bool, stop_after_ns: Option<u64>) -> Self {
+        Self {
+            project_dir,
+            resume,
+            stop_after_ns,
+            on_page: None,
+            cancelled: None,
+        }
+    }
+
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.cancelled.map(|c| c()).unwrap_or(false)
+    }
+
+    pub(crate) fn report_page(&self, endpoint: &str, page: u64, items: u64) {
+        if let Some(on_page) = self.on_page {
+            on_page(endpoint, page, items);
+        }
+    }
 }
 
 /// One implementation per provider *API shape*, not per chain: the same

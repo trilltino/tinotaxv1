@@ -26,12 +26,23 @@ describe("TinoTax desktop workflow", () => {
   });
 
   it("opens a seeded project, reviews rows, and shows project data", async () => {
+    // The app auto-reopens the last project from localStorage; clear any
+    // leftover from a previous run so this test drives a known project.
+    await browser.execute(() => localStorage.clear());
     await setProject(project);
     await clickButton("Refresh");
     // The internal project codename is no longer shown; confirm the backend
     // status loaded via the user-facing project card ("1 wallet · GBP").
     await waitForText("1 wallet");
 
+    // Single-select wallets: the seeded Lisk wallet (keyless Blockscout) is
+    // enabled and clickable. Selecting it makes it the sole active wallet and
+    // auto-loads its insights ("wallet insights complete").
+    await waitForText("Desktop E2E Lisk wallet");
+    await clickTestId("wallet-card-lisk_test");
+    await waitForText("wallet insights complete");
+
+    await clickButton("Add exchange data (CEX CSV)");
     await setInputValue('[data-testid="cex-id-input"]', "kraken_2024");
     await setInputValue('[data-testid="cex-file-input"]', path.join(project, "kraken_export.csv"));
     await clickButton("Import CEX CSV");
@@ -42,7 +53,15 @@ describe("TinoTax desktop workflow", () => {
 
     await clickButton("Review");
     await clickButton("Load rows");
-    await waitForText("NEAR");
+    await waitForText("ETH");
+
+    // Filtering must re-query the feed live: a no-match search empties the table,
+    // and clearing it brings the rows back.
+    await setInputValue('[data-testid="review-search"]', "zzz-no-such-row");
+    await waitForText("No rows match");
+    await setInputValue('[data-testid="review-search"]', "");
+    await waitForText("ETH");
+
     await setSelectValue('[data-testid="tax-type-e2e_sell"]', "ignore");
     await waitForText("Save 1");
     await clickButton("Save 1");
@@ -56,7 +75,7 @@ describe("TinoTax desktop workflow", () => {
 
     await clickButton("Wallet Data");
     await waitForText("Monthly activity");
-    await waitForText("test.near");
+    await waitForText("Desktop E2E Lisk wallet");
     await waitForText("Pricing coverage");
 
     await clickButton("HMRC Questionnaire");
@@ -108,6 +127,22 @@ async function clickButton(label: string) {
     {
       timeout: 30000,
       timeoutMsg: `expected enabled button ${label}`,
+    },
+  );
+}
+
+async function clickTestId(testId: string) {
+  await browser.waitUntil(
+    async () =>
+      browser.execute((nextTestId) => {
+        const element = document.querySelector(`[data-testid="${nextTestId}"]`);
+        if (!(element instanceof HTMLButtonElement) || element.disabled) return false;
+        element.click();
+        return true;
+      }, testId),
+    {
+      timeout: 30000,
+      timeoutMsg: `expected enabled element ${testId}`,
     },
   );
 }

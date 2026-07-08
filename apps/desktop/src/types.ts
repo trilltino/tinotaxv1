@@ -89,6 +89,19 @@ export interface WalletConfigResult {
   wallets: WalletSourceDto[];
 }
 
+export interface DetectedChainDto {
+  chain: string;
+  label: string;
+  address: string;
+}
+
+export interface CreateProjectResultDto {
+  configPath: string;
+  projectPath: string;
+  name: string;
+  detected: DetectedChainDto[];
+}
+
 export interface CexImportResultDto {
   sourceId: string;
   platform: string;
@@ -226,6 +239,39 @@ export interface ReviewRowsResult {
   priceSources: string[];
 }
 
+export interface ReviewQuery {
+  offset: number;
+  limit: number;
+  needsReviewOnly?: boolean;
+  unknownOnly?: boolean;
+  needsAttentionOnly?: boolean;
+  taxYear?: string | null;
+  asset?: string | null;
+  chain?: string | null;
+  eventType?: string | null;
+  taxType?: string | null;
+  text?: string | null;
+  sortBy?: string | null;
+  sortDesc?: boolean;
+}
+
+export interface ReviewPage {
+  rows: ReviewRow[];
+  offset: number;
+  limit: number;
+  total: number;
+  grandTotal: number;
+  needsReviewCount: number;
+  needsAttentionCount: number;
+  ignorableContractCalls: number;
+  assets: string[];
+  taxYears: string[];
+  chains: string[];
+  eventTypes: string[];
+  taxEventTypes: string[];
+  priceSources: string[];
+}
+
 export interface ReviewOverrideDraft {
   eventId: string;
   userTaxType?: string;
@@ -261,6 +307,11 @@ export interface WorkflowLog {
   level: "info" | "error";
 }
 
+export interface ApiKeysStatus {
+  nearblocksSet: boolean;
+  coingeckoSet: boolean;
+}
+
 export interface CommandClient {
   selectConfigFile(): Promise<string | null>;
   selectCsvFile(): Promise<string | null>;
@@ -270,6 +321,10 @@ export interface CommandClient {
   getProjectPaths(project: string, taxYear?: string): Promise<ProjectPathsDto>;
   getProjectDataView(project: string, taxYear?: string): Promise<ProjectDataViewDto>;
   loadConfigWallets(config: string): Promise<WalletConfigResult>;
+  createProjectFromAddress(
+    address: string,
+    name?: string | null,
+  ): Promise<CreateProjectResultDto>;
   getWalletInsights(
     project: string,
     walletId?: string | null,
@@ -291,14 +346,30 @@ export interface CommandClient {
     walletIds: string[],
     resume: boolean,
   ): Promise<void>;
+  runPrepareWallet(
+    config: string,
+    project: string,
+    walletIds: string[],
+    taxYear: string,
+    resume: boolean,
+    fetchPrices: boolean,
+  ): Promise<void>;
   runRefreshReview(project: string): Promise<void>;
   runFinalizeYear(project: string, taxYear: string, allowUnpriced: boolean): Promise<void>;
+  runRebuildLedger(project: string): Promise<void>;
   loadReviewRows(project: string): Promise<ReviewRowsResult>;
+  loadReviewPage(project: string, query: ReviewQuery): Promise<ReviewPage>;
+  autoClassifyContractCalls(project: string): Promise<SaveReviewResult>;
+  bulkSetReview(project: string, query: ReviewQuery, taxType: string): Promise<SaveReviewResult>;
   saveReviewOverrides(project: string, drafts: ReviewOverrideDraft[]): Promise<SaveReviewResult>;
   exportHmrcQuestionnaire(
     project: string,
     responses: HmrcQuestionnaireResponse[],
   ): Promise<HmrcQuestionnaireExportResult>;
   openPath(path: string): Promise<void>;
+  saveFileCopy(source: string): Promise<string | null>;
+  cancelPrepare(): Promise<void>;
+  getApiKeys(): Promise<ApiKeysStatus>;
+  saveApiKeys(nearblocks: string, coingecko: string): Promise<ApiKeysStatus>;
   onWorkflowLog(handler: (log: WorkflowLog) => void): Promise<() => void>;
 }

@@ -5,12 +5,12 @@ period_start = "2017-01-01T00:00:00Z"
 period_end = "2025-04-05T23:59:59Z"
 
 [[wallets]]
-id = "near_test"
-name = "Desktop E2E NEAR wallet"
-chain = "near"
-address = "test.near"
-provider = "nearblocks"
+id = "lisk_test"
+name = "Desktop E2E Lisk wallet"
+chain = "lisk-evm"
+address = "0x1b4399A7c97ae092fB4CCDc1598b2767ECB79652"
+provider = "blockscout"
 
-[providers.nearblocks]
-kind = "nearblocks"
-base_url = "https://api.nearblocks.io/v1"
+[providers.blockscout]
+kind = "blockscout"
+base_url = "https://blockscout.lisk.com/api/v2"

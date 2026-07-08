@@ -11,6 +11,21 @@ fn gbp(value: Decimal) -> String {
     value.round_dp(2).to_string()
 }
 
+/// Quantities carry up to 18 dp of chain precision. Round to 12 dp for the
+/// human-facing reports — far below materiality for any token — and trim
+/// trailing zeros. The pool math itself always uses full-precision Decimals;
+/// this is display only.
+fn qty(value: Decimal) -> String {
+    value.round_dp(12).normalize().to_string()
+}
+
+/// A pool movement is dust — a sub-atomic rounding artifact from the source
+/// data (e.g. a 3e-14 token "acquisition") — when both its quantity and cost
+/// round away to nothing. These add noise rows without changing the pool.
+fn is_dust_movement(quantity_delta: Decimal, cost_delta: Decimal) -> bool {
+    quantity_delta.round_dp(12).is_zero() && cost_delta.round_dp(2).is_zero()
+}
+
 /// Returns the folder everything was written to.
 pub fn write_reports(paths: &ProjectPaths, calc: &UkTaxCalculation) -> Result<camino::Utf8PathBuf> {
     let dir = paths.tax_dir(&calc.tax_year.label());
@@ -44,13 +59,13 @@ pub fn write_reports(paths: &ProjectPaths, calc: &UkTaxCalculation) -> Result<ca
                 d.asset.as_str(),
                 d.date.as_str(),
                 d.tax_year.as_str(),
-                &d.quantity.to_string(),
+                &qty(d.quantity),
                 &gbp(d.proceeds_gbp),
-                &d.matched_same_day_quantity.to_string(),
+                &qty(d.matched_same_day_quantity),
                 &gbp(d.matched_same_day_cost_gbp),
-                &d.matched_30_day_quantity.to_string(),
+                &qty(d.matched_30_day_quantity),
                 &gbp(d.matched_30_day_cost_gbp),
-                &d.matched_s104_quantity.to_string(),
+                &qty(d.matched_s104_quantity),
                 &gbp(d.matched_s104_cost_gbp),
                 &gbp(d.allowable_cost_gbp),
                 &gbp(d.gain_or_loss_gbp),
@@ -77,14 +92,19 @@ pub fn write_reports(paths: &ProjectPaths, calc: &UkTaxCalculation) -> Result<ca
             "note",
         ])?;
         for m in &calc.pool_movements {
+            // Skip pure-dust movements (sub-atomic source-data artifacts) so the
+            // ledger reads cleanly; the pool math already accounts for them.
+            if is_dust_movement(m.quantity_delta, m.cost_delta_gbp) {
+                continue;
+            }
             w.write_record([
                 m.asset.as_str(),
                 m.date.as_str(),
                 m.tax_year.as_str(),
                 m.kind.as_str(),
-                &m.quantity_delta.to_string(),
+                &qty(m.quantity_delta),
                 &gbp(m.cost_delta_gbp),
-                &m.quantity_after.to_string(),
+                &qty(m.quantity_after),
                 &gbp(m.cost_after_gbp),
                 m.note.as_str(),
             ])?;
@@ -106,9 +126,9 @@ pub fn write_reports(paths: &ProjectPaths, calc: &UkTaxCalculation) -> Result<ca
         for s in &calc.pool_year_states {
             w.write_record([
                 s.asset.as_str(),
-                &s.opening_quantity.to_string(),
+                &qty(s.opening_quantity),
                 &gbp(s.opening_cost_gbp),
-                &s.closing_quantity.to_string(),
+                &qty(s.closing_quantity),
                 &gbp(s.closing_cost_gbp),
             ])?;
         }
@@ -136,7 +156,7 @@ pub fn write_reports(paths: &ProjectPaths, calc: &UkTaxCalculation) -> Result<ca
                 i.tax_year.as_str(),
                 i.category.as_str(),
                 i.asset.as_str(),
-                &i.quantity.to_string(),
+                &qty(i.quantity),
                 &gbp(i.income_gbp),
                 i.note.as_deref().unwrap_or(""),
             ])?;

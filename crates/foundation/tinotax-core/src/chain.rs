@@ -35,7 +35,7 @@ impl Chain {
             Self::Near => "NEAR",
             Self::LiskEvm => "ETH",
             Self::IotaEvm => "IOTA",
-            Self::Other(_) => "NATIVE",
+            Self::Other(slug) => evm_native_symbol(slug),
         }
     }
 
@@ -44,6 +44,17 @@ impl Chain {
             Self::Near => 24,
             _ => 18,
         }
+    }
+}
+
+/// Native asset for the additional EVM chains `create project` can add by
+/// slug (see `tinotax-app`'s address auto-detect). Unknown chains stay
+/// "NATIVE" so a wrong symbol is never invented for data we can't classify.
+fn evm_native_symbol(slug: &str) -> &'static str {
+    match slug {
+        "ethereum-evm" | "base-evm" | "optimism-evm" | "arbitrum-evm" => "ETH",
+        "gnosis-evm" => "XDAI",
+        _ => "NATIVE",
     }
 }
 
@@ -67,5 +78,21 @@ impl From<Chain> for String {
 impl std::fmt::Display for Chain {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn added_evm_chains_route_and_report_native_symbols() {
+        for slug in ["ethereum-evm", "base-evm", "arbitrum-evm", "gnosis-evm"] {
+            assert!(Chain::from(slug.to_string()).is_evm(), "{slug} should be EVM");
+        }
+        assert_eq!(Chain::from("base-evm".to_string()).native_symbol(), "ETH");
+        assert_eq!(Chain::from("gnosis-evm".to_string()).native_symbol(), "XDAI");
+        // An unclassified chain never invents a symbol.
+        assert_eq!(Chain::from("mystery".to_string()).native_symbol(), "NATIVE");
     }
 }

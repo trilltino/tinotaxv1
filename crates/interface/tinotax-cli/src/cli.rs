@@ -64,6 +64,9 @@ pub enum Command {
         /// Reuse already-fetched raw pages
         #[arg(long)]
         resume: bool,
+        /// Fetch only these wallet id(s); repeat for several. Omit to fetch all.
+        #[arg(long = "wallet")]
+        wallet: Vec<String>,
     },
 
     /// Import the CEX CSV exports declared as cex_csvs entries in project.toml
@@ -227,6 +230,28 @@ pub enum ProjectWorkflowCommand {
         #[arg(long)]
         allow_unpriced: bool,
     },
+    /// One-click: fetch → normalise → auto-ignore contract calls → build →
+    /// (price fetch) → price → calculate, for the selected wallet(s)
+    Prepare {
+        /// Wallet/source config, e.g. wallets.toml or the project's project.toml
+        #[arg(long)]
+        config: String,
+        /// Project folder to create or reuse
+        #[arg(long)]
+        project: String,
+        /// Prepare only these wallet id(s); repeat for several. Omit for all.
+        #[arg(long = "wallet")]
+        wallet: Vec<String>,
+        /// Tax year label, e.g. 2024-2025
+        #[arg(long)]
+        tax_year: String,
+        /// Reuse already-fetched raw pages
+        #[arg(long)]
+        resume: bool,
+        /// Also fetch GBP prices from CoinGecko (needs an API key)
+        #[arg(long)]
+        fetch_prices: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -248,6 +273,11 @@ pub enum ReviewCommand {
         /// The edited review CSV
         #[arg(long)]
         file: String,
+    },
+    /// Bulk-classify every zero-value contract call as `ignore` (non-taxable)
+    AutoClassify {
+        #[command(flatten)]
+        project: ProjectArg,
     },
 }
 

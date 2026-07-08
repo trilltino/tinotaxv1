@@ -137,11 +137,11 @@ pub fn desktop_wallet_insights(
     let (paths, config) = crate::open_project(project)?;
     let tax_year = tax_year.unwrap_or("2024-2025").to_string();
 
-    let events = tinotax_review::load_all_events(&paths)?;
+    let events = crate::event_cache::load_events_cached(&paths)?;
     let overrides = tinotax_review::load_latest_overrides(&paths)?;
 
     let mut event_counts: BTreeMap<&str, u64> = BTreeMap::new();
-    for event in &events {
+    for event in events.iter() {
         *event_counts.entry(event.source_id.as_str()).or_default() += 1;
     }
     let wallets: Vec<WalletOptionDto> = config

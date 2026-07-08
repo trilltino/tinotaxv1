@@ -8,6 +8,7 @@ use tinotax_config::ProjectConfig;
 use tinotax_store::ProjectPaths;
 
 use crate::assumptions::{ensure_questionnaire, load_questionnaire, source_of_funds_notes};
+use crate::counterparties::write_counterparties;
 use crate::hmrc_questions::{hmrc_questions_draft, load_summary_csv};
 use crate::markdown::{calculator_statement, pack_readme, write_md};
 use crate::platforms::{write_platforms, write_wallet_addresses};
@@ -74,6 +75,11 @@ pub fn build_pack(
     write_platforms(&ledger, &dir)?;
     write_wallet_addresses(config, &dir)?;
     write_raw_index(paths, &dir)?;
+    // Q5 needs named protocols/DEXs, not just chains — list every contract the
+    // wallets touched, from the normalised events.
+    let events = tinotax_review::load_all_events(paths)
+        .context("the evidence pack needs normalised events — run `normalise` first")?;
+    write_counterparties(&events, &dir)?;
 
     // 5. Markdown: questionnaire-driven and generated statements.
     let pending = ensure_questionnaire(paths)?;

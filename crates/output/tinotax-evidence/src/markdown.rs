@@ -48,6 +48,7 @@ pub fn pack_readme(tax_year: &str, questionnaire_pending: bool) -> String {
          | `s104_pool_opening_closing.csv` | Pool balances at the year boundaries |\n\
          | `income_summary.csv` | Staking/mining/airdrop/other receipts |\n\
          | `platforms_protocols_used.csv` | Exchanges, chains and platforms used |\n\
+         | `counterparties.csv` | Every contract/protocol the wallets touched (HMRC Q5) |\n\
          | `wallet_addresses.csv` | Declared wallet addresses |\n\
          | `raw_data_index.csv` | Every raw evidence file with its BLAKE3 hash |\n\
          | `pricing_audit.csv` | Where every GBP valuation came from |\n\

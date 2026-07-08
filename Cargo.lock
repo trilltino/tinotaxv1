@@ -4699,6 +4699,7 @@ dependencies = [
  "tauri-plugin-wdio-webdriver",
  "tinotax-app",
  "tokio",
+ "toml 0.9.12+spec-1.1.0",
  "tracing",
 ]
 

@@ -10,7 +10,7 @@ use std::fs;
 use anyhow::{bail, Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::Serialize;
-use tinotax_config::ProjectConfig;
+use tinotax_config::{ProjectConfig, ProviderKind};
 use tinotax_store::ProjectPaths;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -196,7 +196,7 @@ pub async fn workflow_startup(config: &str, project: &str, resume: bool) -> Resu
     crate::fetch_project(project, resume).await?;
 
     println!("\n== 4/9 import CEX ==");
-    crate::import_cex(project)?;
+    crate::import_cex_if_declared(project)?;
 
     println!("\n== 5/9 normalise ==");
     crate::normalise_project(project)?;
@@ -223,28 +223,39 @@ pub async fn workflow_sync_wallets(
     project: &str,
     wallet_ids: &[String],
     resume: bool,
+    hooks: crate::FetchHooks<'_>,
 ) -> Result<()> {
     println!("== 1/8 load selected wallets ==");
     let config_path = crate::resolve_config_path(config)?;
-    let config = ProjectConfig::load(&config_path)
+    let source_config = ProjectConfig::load(&config_path)
         .with_context(|| format!("loading wallet config {config_path}"))?;
-    let filtered = selected_lisk_config(config, wallet_ids)?;
+    // Validate the selection (this also enforces the Lisk-only sync gate) and
+    // capture which wallet ids to fetch. We deliberately do NOT persist this
+    // filtered config: trimming project.toml to one wallet would delete the
+    // other wallets from the project.
+    let selected = selected_lisk_config(source_config.clone(), wallet_ids)?;
+    let fetch_ids: Vec<String> = selected.wallets.iter().map(|w| w.id.clone()).collect();
 
     let paths = ProjectPaths::new(Utf8PathBuf::from(project));
     paths.init()?;
-    let filtered_text =
-        toml::to_string_pretty(&filtered).context("serialising selected wallet config")?;
-    fs::write(paths.config_file(), filtered_text)
-        .with_context(|| format!("writing {}", paths.config_file()))?;
+    // Seed a brand-new project with the full multi-wallet config, but never
+    // clobber an existing project.toml — syncing one wallet must not drop the
+    // rest of the project's wallets.
+    if !paths.config_file().exists() {
+        let full_text = toml::to_string_pretty(&source_config)
+            .context("serialising wallet config")?;
+        fs::write(paths.config_file(), full_text)
+            .with_context(|| format!("writing {}", paths.config_file()))?;
+    }
 
     println!("\n== 2/8 preflight ==");
     crate::preflight(paths.config_file().as_str(), project)?;
 
     println!("\n== 3/8 fetch selected wallet API ==");
-    crate::fetch_project(project, resume).await?;
+    crate::fetch_project_wallets(project, resume, Some(&fetch_ids), hooks).await?;
 
     println!("\n== 4/8 import CEX ==");
-    crate::import_cex(project)?;
+    crate::import_cex_if_declared(project)?;
 
     println!("\n== 5/8 normalise ==");
     crate::normalise_project(project)?;
@@ -291,26 +302,38 @@ fn selected_lisk_config(mut config: ProjectConfig, wallet_ids: &[String]) -> Res
         bail!("unknown selected wallet id(s): {}", unknown.join(", "));
     }
 
+    // A wallet is syncable when its data source is reachable: keyless Blockscout
+    // explorers (Lisk, IOTA EVM) always are; NearBlocks needs its paid API key
+    // present. Compute this up front to avoid borrowing `config` inside retain.
+    let nearblocks_ready = std::env::var("NEARBLOCKS_API_KEY")
+        .ok()
+        .filter(|key| !key.is_empty())
+        .is_some();
+    let mut syncable = BTreeSet::new();
     let mut rejected = Vec::new();
-    config.wallets.retain(|wallet| {
+    for wallet in &config.wallets {
         if !requested.contains(&wallet.id) {
-            return false;
+            continue;
         }
-        if wallet.chain == "lisk-evm" {
-            true
+        let ok = match config.provider_for(wallet).kind {
+            ProviderKind::Blockscout => true,
+            ProviderKind::Nearblocks => nearblocks_ready,
+        };
+        if ok {
+            syncable.insert(wallet.id.clone());
         } else {
             rejected.push(format!("{} ({})", wallet.id, wallet.chain));
-            false
         }
-    });
+    }
+    config.wallets.retain(|wallet| syncable.contains(&wallet.id));
     if !rejected.is_empty() {
         bail!(
-            "only Lisk wallets are enabled in the desktop sync right now; disabled selection(s): {}",
+            "these selected wallets need a paid API key before they can sync (set NEARBLOCKS_API_KEY): {}",
             rejected.join(", ")
         );
     }
     if config.wallets.is_empty() {
-        bail!("no enabled Lisk wallet selected");
+        bail!("no syncable wallet selected");
     }
 
     let used_providers = config
@@ -343,6 +366,63 @@ pub fn workflow_refresh_review(project: &str) -> Result<()> {
     crate::readiness(project)?;
 
     println!("\nreview refresh complete: {project}");
+    Ok(())
+}
+
+/// One-click "add a wallet and prepare it for tax": fetch → normalise → review
+/// exports → auto-ignore zero-value contract calls → build → (optional price
+/// fetch) → price → calculate. Each step reports through `progress` so the UI
+/// can show where it is. This is the self-service path — every step is an
+/// existing pipeline function; this only sequences them.
+#[allow(clippy::too_many_arguments)]
+pub async fn workflow_prepare(
+    config: &str,
+    project: &str,
+    wallet_ids: &[String],
+    tax_year: &str,
+    resume: bool,
+    fetch_prices: bool,
+    allow_unpriced: bool,
+    progress: &(dyn Fn(&str) + Sync),
+    hooks: crate::FetchHooks<'_>,
+) -> Result<()> {
+    progress("fetching + normalising wallet data");
+    workflow_sync_wallets(config, project, wallet_ids, resume, hooks).await?;
+
+    progress("classifying zero-value contract calls");
+    crate::auto_classify_contract_calls(project)?;
+
+    progress("building reviewed ledger");
+    crate::ledger_build(project)?;
+
+    if fetch_prices {
+        progress("fetching GBP prices");
+        crate::prices_fetch(project, "coingecko").await?;
+    }
+
+    progress("pricing ledger");
+    crate::ledger_price(project)?;
+
+    progress(&format!("calculating UK tax for {tax_year}"));
+    crate::calculate_uk(project, tax_year, allow_unpriced)?;
+
+    progress("prepare complete");
+    Ok(())
+}
+
+/// Rebuild the reviewed + priced ledger from the current normalised events and
+/// review overrides, without running the UK calculation or evidence pack. This
+/// is the light "apply my review decisions" step: after bulk-classifying rows,
+/// it refreshes the ledger the Wallet Data insights read from, so counts like
+/// "outstanding" and pricing coverage update.
+pub fn workflow_rebuild_ledger(project: &str) -> Result<()> {
+    println!("== 1/2 ledger build ==");
+    crate::ledger_build(project)?;
+
+    println!("\n== 2/2 ledger price ==");
+    crate::ledger_price(project)?;
+
+    println!("\nledger rebuild complete: {project}");
     Ok(())
 }
 
@@ -637,6 +717,13 @@ address = "0x1111111111111111111111111111111111111111"
 provider = "lisk_blockscout"
 
 [[wallets]]
+id = "iota_main"
+name = "IOTA wallet"
+chain = "iota-evm"
+address = "0x1111111111111111111111111111111111111111"
+provider = "iota_blockscout"
+
+[[wallets]]
 id = "near_main"
 name = "NEAR wallet"
 chain = "near"
@@ -646,6 +733,10 @@ provider = "nearblocks"
 [providers.lisk_blockscout]
 kind = "blockscout"
 base_url = "https://blockscout.lisk.com/api/v2"
+
+[providers.iota_blockscout]
+kind = "blockscout"
+base_url = "https://explorer.evm.iota.org/api/v2"
 
 [providers.nearblocks]
 kind = "nearblocks"
@@ -773,26 +864,34 @@ base_url = "https://api.nearblocks.io/v1"
     }
 
     #[test]
-    fn selected_lisk_config_keeps_only_enabled_wallet_and_provider() -> Result<(), Box<dyn Error>> {
+    fn selected_config_keeps_keyless_blockscout_wallets_and_their_providers() -> Result<(), Box<dyn Error>> {
+        // Lisk and IOTA are both keyless Blockscout — both should sync.
         let config: ProjectConfig = toml::from_str(MULTI_WALLET_TOML)?;
-        let filtered = selected_lisk_config(config, &["lisk_main".to_string()])?;
+        let filtered =
+            selected_lisk_config(config, &["lisk_main".to_string(), "iota_main".to_string()])?;
 
-        assert_eq!(filtered.wallets.len(), 1);
-        assert_eq!(filtered.wallets[0].id, "lisk_main");
+        assert_eq!(filtered.wallets.len(), 2);
+        assert!(filtered.wallets.iter().any(|w| w.id == "lisk_main"));
+        assert!(filtered.wallets.iter().any(|w| w.id == "iota_main"));
         assert!(filtered.providers.contains_key("lisk_blockscout"));
+        assert!(filtered.providers.contains_key("iota_blockscout"));
         assert!(!filtered.providers.contains_key("nearblocks"));
         Ok(())
     }
 
     #[test]
-    fn selected_lisk_config_rejects_disabled_wallets() -> Result<(), Box<dyn Error>> {
+    fn selected_config_rejects_nearblocks_without_a_key() -> Result<(), Box<dyn Error>> {
+        // NearBlocks needs a paid key; without NEARBLOCKS_API_KEY it is rejected.
+        if std::env::var("NEARBLOCKS_API_KEY").is_ok_and(|k| !k.is_empty()) {
+            return Ok(()); // key present in this environment — gate would allow it
+        }
         let config: ProjectConfig = toml::from_str(MULTI_WALLET_TOML)?;
         let err = match selected_lisk_config(config, &["near_main".to_string()]) {
-            Ok(_) => return Err(std::io::Error::other("expected disabled-wallet error").into()),
+            Ok(_) => return Err(std::io::Error::other("expected gated-wallet error").into()),
             Err(err) => err,
         };
 
-        assert!(err.to_string().contains("only Lisk wallets are enabled"));
+        assert!(err.to_string().contains("NEARBLOCKS_API_KEY"));
         Ok(())
     }
 }

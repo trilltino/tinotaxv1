@@ -6,6 +6,7 @@
 //! can be handed to the client or their accountant.
 
 pub mod assumptions;
+pub mod counterparties;
 pub mod hmrc_questions;
 pub mod markdown;
 pub mod pack;

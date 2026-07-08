@@ -1,2 +1,2 @@
-{"asset_symbol":"NEAR","asset_contract":null,"timestamp":"2024-05-01T00:00:00Z","currency":"GBP","price":"5","source":"manual","confidence":"high","fetched_at":"2026-07-06T00:00:00Z","note":"seeded desktop e2e"}
-{"asset_symbol":"NEAR","asset_contract":null,"timestamp":"2024-06-01T00:00:00Z","currency":"GBP","price":"7","source":"manual","confidence":"high","fetched_at":"2026-07-06T00:00:00Z","note":"seeded desktop e2e"}
+{"asset_symbol":"ETH","asset_contract":null,"timestamp":"2024-05-01T00:00:00Z","currency":"GBP","price":"5","source":"manual","confidence":"high","fetched_at":"2026-07-06T00:00:00Z","note":"seeded desktop e2e"}
+{"asset_symbol":"ETH","asset_contract":null,"timestamp":"2024-06-01T00:00:00Z","currency":"GBP","price":"7","source":"manual","confidence":"high","fetched_at":"2026-07-06T00:00:00Z","note":"seeded desktop e2e"}

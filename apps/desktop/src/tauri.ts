@@ -1,14 +1,18 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
+  ApiKeysStatus,
   CexImportResultDto,
   CleanPlanEntry,
   CommandClient,
+  CreateProjectResultDto,
   ProjectDataViewDto,
   ProjectPathsDto,
   ProjectStatusDto,
   HmrcQuestionnaireExportResult,
   ReviewOverrideDraft,
+  ReviewPage,
+  ReviewQuery,
   ReviewRowsResult,
   SaveReviewResult,
   WalletConfigResult,
@@ -35,6 +39,8 @@ export const tauriClient: CommandClient = {
   getProjectDataView: (project, taxYear) =>
     desktopInvoke<ProjectDataViewDto>("get_project_data_view", { project, taxYear }),
   loadConfigWallets: (config) => desktopInvoke<WalletConfigResult>("load_config_wallets", { config }),
+  createProjectFromAddress: (address, name) =>
+    desktopInvoke<CreateProjectResultDto>("create_project_from_address", { address, name }),
   getWalletInsights: (project, walletId, taxYear) =>
     desktopInvoke<WalletInsightsResult>("get_wallet_insights", { project, walletId, taxYear }),
   importCexCsv: (project, sourceId, platform, file, mapping) =>
@@ -53,15 +59,36 @@ export const tauriClient: CommandClient = {
     desktopInvoke<void>("run_startup_workflow", { config, project, resume }),
   runWalletSync: (config, project, walletIds, resume) =>
     desktopInvoke<void>("run_wallet_sync", { config, project, walletIds, resume }),
+  runPrepareWallet: (config, project, walletIds, taxYear, resume, fetchPrices) =>
+    desktopInvoke<void>("run_prepare_wallet", {
+      config,
+      project,
+      walletIds,
+      taxYear,
+      resume,
+      fetchPrices,
+    }),
   runRefreshReview: (project) => desktopInvoke<void>("run_refresh_review", { project }),
   runFinalizeYear: (project, taxYear, allowUnpriced) =>
     desktopInvoke<void>("run_finalize_year", { project, taxYear, allowUnpriced }),
+  runRebuildLedger: (project) => desktopInvoke<void>("run_rebuild_ledger", { project }),
   loadReviewRows: (project) => desktopInvoke<ReviewRowsResult>("load_review_rows", { project }),
+  loadReviewPage: (project, query: ReviewQuery) =>
+    desktopInvoke<ReviewPage>("load_review_page", { project, query }),
+  autoClassifyContractCalls: (project) =>
+    desktopInvoke<SaveReviewResult>("auto_classify_contract_calls", { project }),
+  bulkSetReview: (project, query: ReviewQuery, taxType: string) =>
+    desktopInvoke<SaveReviewResult>("bulk_set_review", { project, query, taxType }),
   saveReviewOverrides: (project, drafts: ReviewOverrideDraft[]) =>
     desktopInvoke<SaveReviewResult>("save_review_overrides", { project, drafts }),
   exportHmrcQuestionnaire: (project, responses) =>
     desktopInvoke<HmrcQuestionnaireExportResult>("export_hmrc_questionnaire", { project, responses }),
   openPath: (path) => desktopInvoke<void>("open_path", { path }),
+  saveFileCopy: (source) => desktopInvoke<string | null>("save_file_copy", { source }),
+  cancelPrepare: () => desktopInvoke<void>("cancel_prepare"),
+  getApiKeys: () => desktopInvoke<ApiKeysStatus>("get_api_keys"),
+  saveApiKeys: (nearblocks, coingecko) =>
+    desktopInvoke<ApiKeysStatus>("save_api_keys", { nearblocks, coingecko }),
   onWorkflowLog: async (handler) => {
     if (!isTauri()) return () => undefined;
     const unlisten = await listen<WorkflowLog>("workflow-log", (event) => handler(event.payload));

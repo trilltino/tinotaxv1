@@ -76,6 +76,9 @@ impl BlockscoutFetcher {
         let mut items_fetched = 0u64;
 
         loop {
+            if ctx.is_cancelled() {
+                anyhow::bail!("fetch cancelled");
+            }
             let page = cursor.next_page;
             let existing_page = cache.page_path(page);
             let (body, reused_cached_page) = if ctx.resume && existing_page.exists() {
@@ -131,6 +134,7 @@ impl BlockscoutFetcher {
                     reused = reused_cached_page,
                     "cached page"
                 );
+                ctx.report_page(dir_name, page, items_fetched);
             }
 
             let next = body

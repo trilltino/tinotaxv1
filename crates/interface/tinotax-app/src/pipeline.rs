@@ -29,6 +29,20 @@ pub fn import_cex(project: &str) -> Result<()> {
     Ok(())
 }
 
+/// Like [`import_cex`], but a no-op when the project declares no `[[cex_csvs]]`.
+/// The wallet-sync and startup workflows call this because CEX data is
+/// optional: a wallet-only project must not fail just because it has no
+/// exchange CSV exports. The explicit `import-cex` command keeps the strict
+/// [`import_cex`], which errors so the user knows nothing was declared.
+pub fn import_cex_if_declared(project: &str) -> Result<()> {
+    let (_, config) = crate::open_project(project)?;
+    if config.cex_csvs.is_empty() {
+        println!("no CEX CSV sources declared — skipping CEX import");
+        return Ok(());
+    }
+    import_cex(project)
+}
+
 /// `review export-all`: every event, reviewable and editable.
 pub fn export_review_all(project: &str) -> Result<u64> {
     let (paths, _) = crate::open_project(project)?;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildDraft, filterReviewRows, type ReviewFilters } from "./review";
+import { buildDraft, EMPTY_FILTERS, filterReviewRows } from "./review";
 import type { ReviewRow } from "./types";
 
 const baseRow: ReviewRow = {
@@ -37,13 +37,7 @@ const baseRow: ReviewRow = {
   jsonPath: "txns[0]",
 };
 
-const defaultFilters: ReviewFilters = {
-  text: "",
-  needsReview: false,
-  unknownOnly: false,
-  taxYear: "",
-  asset: "",
-};
+const defaultFilters = EMPTY_FILTERS;
 
 describe("review helpers", () => {
   it("filters by review state, inferred tax type, tax year, asset, and search text", () => {

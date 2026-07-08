@@ -4,9 +4,25 @@ export interface ReviewFilters {
   text: string;
   needsReview: boolean;
   unknownOnly: boolean;
+  needsAttention: boolean;
   taxYear: string;
   asset: string;
+  chain: string;
+  eventType: string;
+  taxType: string;
 }
+
+export const EMPTY_FILTERS: ReviewFilters = {
+  text: "",
+  needsReview: false,
+  unknownOnly: false,
+  needsAttention: false,
+  taxYear: "",
+  asset: "",
+  chain: "",
+  eventType: "",
+  taxType: "",
+};
 
 export type EditableReviewField = Exclude<keyof ReviewOverrideDraft, "eventId">;
 

@@ -6,6 +6,7 @@ import type {
   CommandClient,
   ProjectPathsDto,
   ProjectStatusDto,
+  ReviewQuery,
   ReviewRowsResult,
   WalletInsightsResult,
   WorkflowLog,
@@ -77,6 +78,40 @@ function makeClient(): CommandClient {
         userNote: "",
         rawFile: "raw/near/test.near/transactions/page_000001.json",
         jsonPath: "txns[0]",
+      },
+      {
+        eventId: "evt-2",
+        timestamp: "2025-01-12T02:38:57Z",
+        taxYear: "2024-2025",
+        sourceId: "lisk_main",
+        platform: "",
+        chain: "lisk-evm",
+        wallet: "0x1111111111111111111111111111111111111111",
+        txHash: "0xdef",
+        detectedEventType: "contract_call",
+        detectedDirection: "out",
+        assetSymbol: "ETH",
+        assetContract: "",
+        amount: "0",
+        feeAsset: "",
+        feeAmount: "",
+        fromAddress: "0x1111111111111111111111111111111111111111",
+        toAddress: "0x4200000000000000000000000000000000000006",
+        confidence: "low",
+        needsReview: true,
+        reviewReasons: "unclassified_contract_call:approve",
+        suggestedTaxType: "unknown",
+        userTaxType: "",
+        userAssetSymbol: "",
+        userQuantity: "",
+        userProceedsGbp: "",
+        userCostGbp: "",
+        userIncomeGbp: "",
+        userFeeGbp: "",
+        userPriceSource: "",
+        userNote: "",
+        rawFile: "raw/lisk-evm/0x1111/transactions/page_000158.json",
+        jsonPath: "items[1]",
       },
     ],
   };
@@ -240,6 +275,12 @@ function makeClient(): CommandClient {
     getProjectPaths: vi.fn(async () => paths),
     getProjectDataView: vi.fn(async () => dataView),
     loadConfigWallets: vi.fn(async () => walletConfig),
+    createProjectFromAddress: vi.fn(async (address: string, name?: string | null) => ({
+      configPath: "C:\\Users\\me\\Documents\\TinoTax\\new-wallet.toml",
+      projectPath: "C:\\Users\\me\\Documents\\TinoTax\\new-wallet",
+      name: name || "new wallet",
+      detected: [{ chain: "lisk-evm", label: "Lisk EVM", address }],
+    })),
     getWalletInsights: vi.fn(async () => insights),
     importCexCsv: vi.fn(async () => ({
       sourceId: "kraken_2021",
@@ -262,9 +303,45 @@ function makeClient(): CommandClient {
     ]),
     runStartupWorkflow: vi.fn(async () => undefined),
     runWalletSync: vi.fn(async () => undefined),
+    runPrepareWallet: vi.fn(async () => undefined),
     runRefreshReview: vi.fn(async () => undefined),
     runFinalizeYear: vi.fn(async () => undefined),
+    runRebuildLedger: vi.fn(async () => undefined),
     loadReviewRows: vi.fn(async () => review),
+    loadReviewPage: vi.fn(async (_project: string, query: ReviewQuery) => {
+      const rows = review.rows;
+      return {
+        rows,
+        offset: query.offset,
+        limit: query.limit,
+        total: rows.length,
+        grandTotal: rows.length,
+        needsReviewCount: rows.filter((r) => r.needsReview).length,
+        needsAttentionCount: rows.filter(
+          (r) => r.needsReview || (r.userTaxType || r.suggestedTaxType) === "unknown",
+        ).length,
+        ignorableContractCalls: rows.filter(
+          (r) =>
+            r.detectedEventType === "contract_call" &&
+            Number.parseFloat(r.amount || "0") === 0 &&
+            !r.userTaxType.trim(),
+        ).length,
+        assets: Array.from(new Set(rows.map((r) => r.assetSymbol))).sort(),
+        taxYears: Array.from(new Set(rows.map((r) => r.taxYear))).sort(),
+        chains: Array.from(new Set(rows.map((r) => r.chain))).sort(),
+        eventTypes: Array.from(new Set(rows.map((r) => r.detectedEventType))).sort(),
+        taxEventTypes: review.taxEventTypes,
+        priceSources: review.priceSources,
+      };
+    }),
+    autoClassifyContractCalls: vi.fn(async () => ({
+      appended: 1,
+      changeLog: `${status.root}\\out\\change_log.csv`,
+    })),
+    bulkSetReview: vi.fn(async () => ({
+      appended: 2,
+      changeLog: `${status.root}\\out\\change_log.csv`,
+    })),
     saveReviewOverrides: vi.fn(async () => ({
       appended: 1,
       changeLog: `${status.root}\\out\\change_log.csv`,
@@ -274,6 +351,10 @@ function makeClient(): CommandClient {
       questionnairePath: `${status.root}\\questionnaire.toml`,
     })),
     openPath: vi.fn(async () => undefined),
+    saveFileCopy: vi.fn(async () => null),
+    cancelPrepare: vi.fn(async () => undefined),
+    getApiKeys: vi.fn(async () => ({ nearblocksSet: false, coingeckoSet: false })),
+    saveApiKeys: vi.fn(async () => ({ nearblocksSet: true, coingeckoSet: true })),
     onWorkflowLog: vi.fn(async (_handler: (log: WorkflowLog) => void) => () => undefined),
   };
 }
@@ -281,6 +362,9 @@ function makeClient(): CommandClient {
 describe("App", () => {
   afterEach(() => {
     cleanup();
+    // The startup effect reopens the last project from localStorage; clear it
+    // so each test starts with no project loaded.
+    localStorage.clear();
   });
 
   it("loads wallets, syncs the enabled Lisk wallet, edits review rows, and saves", async () => {
@@ -293,10 +377,9 @@ describe("App", () => {
 
     const liskCard = await screen.findByTestId("wallet-card-lisk_main");
     expect(liskCard).toHaveTextContent("API enabled");
+    // Single-select: the first enabled wallet (Lisk) is active by default.
     expect(liskCard).toHaveAttribute("aria-pressed", "true");
-    await user.click(liskCard);
-    expect(liskCard).toHaveAttribute("aria-pressed", "false");
-    await user.click(liskCard);
+    expect(liskCard).toHaveTextContent("Active");
     // IOTA (keyless Blockscout) is enabled; NEAR (needs a key) is gated.
     const iotaCard = screen.getByTestId("wallet-card-iota_main");
     expect(iotaCard).toHaveTextContent("API enabled");
@@ -305,11 +388,16 @@ describe("App", () => {
     expect(nearCard).toHaveTextContent("NEARBLOCKS_API_KEY");
     // Pricing is gated until a CoinGecko key is present.
     expect(screen.getByTestId("pricing-api-pill")).toHaveTextContent("key needed");
-    // Both enabled wallets are selected by default; deselect IOTA so this
-    // sync covers only Lisk.
+    // One wallet at a time: selecting IOTA makes it the sole active wallet and
+    // deselects Lisk.
     await user.click(iotaCard);
-    expect(iotaCard).toHaveAttribute("aria-pressed", "false");
-    await user.click(screen.getByRole("button", { name: /Sync selected/i }));
+    expect(iotaCard).toHaveAttribute("aria-pressed", "true");
+    expect(liskCard).toHaveAttribute("aria-pressed", "false");
+    // Re-select Lisk so the sync targets only the Lisk wallet.
+    await user.click(liskCard);
+    expect(liskCard).toHaveAttribute("aria-pressed", "true");
+    // "Fetch only" (Sync) now lives under the wallet-tab Advanced disclosure.
+    await user.click(screen.getByTestId("sync-wallet-button"));
 
     await waitFor(() =>
       expect(client.runWalletSync).toHaveBeenCalledWith(
@@ -345,12 +433,68 @@ describe("App", () => {
     );
   });
 
+  it("bulk-classifies zero-value contract calls as ignore", async () => {
+    const user = userEvent.setup();
+    const client = makeClient();
+    render(<App client={client} />);
+
+    await user.type(screen.getByTestId("project-input"), "C:\\projects\\seeded");
+    await user.click(screen.getByRole("button", { name: /^Review$/i }));
+    await user.click(screen.getByRole("button", { name: /load rows/i }));
+    await screen.findByTestId("review-table");
+
+    // The one zero-value contract_call row (evt-2) is an ignore candidate; the
+    // native_transfer (evt-1) is not.
+    const button = screen.getByTestId("auto-classify-button");
+    expect(button).toHaveTextContent("Ignore 1 contract calls");
+    await user.click(button);
+
+    // Auto-classify now runs server-side (avoids shipping every row to the
+    // client just to build ignore drafts).
+    await waitFor(() =>
+      expect(client.autoClassifyContractCalls).toHaveBeenCalledWith("C:\\projects\\seeded"),
+    );
+  });
+
+  it("creates a project from a wallet address and fetches", async () => {
+    const user = userEvent.setup();
+    const client = makeClient();
+    render(<App client={client} />);
+
+    await user.click(screen.getByTestId("new-project-toggle"));
+    await user.type(
+      screen.getByTestId("new-address-input"),
+      "0x1b4399A7c97ae092fB4CCDc1598b2767ECB79652",
+    );
+    await user.click(screen.getByTestId("create-project-button"));
+
+    await waitFor(() =>
+      expect(client.createProjectFromAddress).toHaveBeenCalledWith(
+        "0x1b4399A7c97ae092fB4CCDc1598b2767ECB79652",
+        null,
+      ),
+    );
+    // Reuses the startup workflow to fetch the new project.
+    await waitFor(() =>
+      expect(client.runStartupWorkflow).toHaveBeenCalledWith(
+        "C:\\Users\\me\\Documents\\TinoTax\\new-wallet.toml",
+        "C:\\Users\\me\\Documents\\TinoTax\\new-wallet",
+        false,
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("project-name")).toHaveTextContent("new-wallet"),
+    );
+  });
+
   it("imports a CEX CSV from the wallets tab", async () => {
     const user = userEvent.setup();
     const client = makeClient();
     render(<App client={client} />);
 
     await user.type(screen.getByTestId("project-input"), "C:\\projects\\seeded");
+    // CEX import is collapsed by default for wallet-only projects.
+    await user.click(screen.getByTestId("cex-add-link"));
     await user.type(screen.getByTestId("cex-id-input"), "kraken_2021");
     await user.selectOptions(screen.getByTestId("cex-platform-select"), "kraken");
     await user.type(screen.getByTestId("cex-file-input"), "C:\\exports\\kraken.csv");

@@ -40,19 +40,43 @@ fn stop_after_ns(period_end: &str) -> Result<u64> {
     u64::try_from(ns).context("period_end out of range")
 }
 
+/// Progress and cancellation hooks the desktop passes into a fetch so it can
+/// show live page counts and support a Cancel button. Both are optional.
+#[derive(Default, Clone, Copy)]
+pub struct FetchHooks<'a> {
+    /// Called after each page: `(wallet_id, endpoint, page, cumulative_items)`.
+    pub on_page: Option<&'a (dyn Fn(&str, &str, u64, u64) + Sync)>,
+    /// Polled before each page; `true` aborts (raw cache stays resumable).
+    pub cancelled: Option<&'a (dyn Fn() -> bool + Sync)>,
+}
+
 /// Fetch every configured wallet into the raw cache. With `resume`, honours
 /// per-endpoint cursors, so a rate-limited or interrupted run picks up where
 /// it stopped instead of re-downloading.
 pub async fn fetch_project(project: &str, resume: bool) -> Result<Vec<FetchReport>> {
+    fetch_project_wallets(project, resume, None, FetchHooks::default()).await
+}
+
+/// Like [`fetch_project`], but restricts the fetch to `only` wallet ids when
+/// provided, and reports progress / honours cancellation via `hooks`. Fetching
+/// a subset never trims the persisted `project.toml`, so the other wallets
+/// survive.
+pub async fn fetch_project_wallets(
+    project: &str,
+    resume: bool,
+    only: Option<&[String]>,
+    hooks: FetchHooks<'_>,
+) -> Result<Vec<FetchReport>> {
     let (paths, config) = open_project(project)?;
-    let ctx = FetchContext {
-        project_dir: &paths.root,
-        resume,
-        stop_after_ns: Some(stop_after_ns(&config.project.period_end)?),
-    };
+    let stop_after_ns = Some(stop_after_ns(&config.project.period_end)?);
 
     let mut reports = Vec::new();
     for wallet in &config.wallets {
+        if let Some(ids) = only {
+            if !ids.iter().any(|id| id == &wallet.id) {
+                continue;
+            }
+        }
         let entry = config.provider_for(wallet);
         let fetcher = make_fetcher(&provider_spec(entry))?;
         let source = wallet.to_source();
@@ -60,6 +84,22 @@ pub async fn fetch_project(project: &str, resume: bool) -> Result<Vec<FetchRepor
             "fetching {} ({} / {}) via {} ...",
             wallet.id, wallet.chain, wallet.address, wallet.provider
         );
+
+        // Rebind the per-page hook to include this wallet's id.
+        let wallet_id = wallet.id.clone();
+        let per_page = hooks
+            .on_page
+            .map(|f| move |endpoint: &str, page: u64, items: u64| f(&wallet_id, endpoint, page, items));
+        let ctx = FetchContext {
+            project_dir: &paths.root,
+            resume,
+            stop_after_ns,
+            on_page: per_page
+                .as_ref()
+                .map(|c| c as &(dyn Fn(&str, u64, u64) + Sync)),
+            cancelled: hooks.cancelled,
+        };
+
         let report = fetcher.fetch_wallet(ctx, &source).await?;
         println!(
             "  {} pages, {} items{}",

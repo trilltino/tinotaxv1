@@ -121,6 +121,9 @@ impl WalletFetcher for NearBlocksFetcher {
         let delay = self.delay_ms();
 
         loop {
+            if ctx.is_cancelled() {
+                anyhow::bail!("fetch cancelled");
+            }
             let page = cursor.next_page;
             let mut query = vec![
                 ("per_page".to_string(), PER_PAGE.to_string()),
@@ -172,6 +175,7 @@ impl WalletFetcher for NearBlocksFetcher {
             report.pages_fetched += 1;
             report.items_fetched += item_count;
             info!(wallet = %wallet.address, page, items = item_count, "cached page");
+            ctx.report_page("transactions", page, report.items_fetched);
 
             // Ascending order means once a page ends past the stop timestamp
             // the window is fully covered. The overshooting page is kept;

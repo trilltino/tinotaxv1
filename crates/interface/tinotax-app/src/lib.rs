@@ -3,8 +3,10 @@
 
 pub mod analysis_export;
 pub mod cex_import;
+pub mod create_project;
 pub mod desktop_api;
 pub mod diagnose_project;
+pub mod event_cache;
 pub mod doctor;
 pub mod export_review;
 pub mod fetch_project;
@@ -22,27 +24,31 @@ use tinotax_config::ProjectConfig;
 use tinotax_store::ProjectPaths;
 
 pub use cex_import::{desktop_import_cex, CexImportResultDto};
+pub use create_project::{
+    desktop_create_project_from_address, CreateProjectResult, DetectedChainDto,
+};
 pub use desktop_api::{
-    desktop_config_wallets, desktop_default_project, desktop_project_data_view,
-    desktop_project_paths, desktop_project_status, export_hmrc_questionnaire, load_review_rows,
-    save_review_overrides, DataArtifactDto, HmrcQuestionnaireExportResult,
-    HmrcQuestionnaireResponseDraft, ProjectDataViewDto, ProjectPathsDto, ProjectStatusDto,
-    ReviewOverrideDraft, ReviewRowsResult, SaveReviewResult, WalletConfigResult, WalletSourceDto,
+    auto_classify_contract_calls, bulk_set_review, desktop_config_wallets, desktop_default_project,
+    desktop_project_data_view, desktop_project_paths, desktop_project_status,
+    export_hmrc_questionnaire, load_review_page, load_review_rows, save_review_overrides,
+    DataArtifactDto, HmrcQuestionnaireExportResult, HmrcQuestionnaireResponseDraft, ProjectDataViewDto,
+    ProjectPathsDto, ProjectStatusDto, ReviewOverrideDraft, ReviewPage, ReviewQuery, ReviewRowsResult,
+    SaveReviewResult, WalletConfigResult, WalletSourceDto,
 };
 pub use diagnose_project::diagnose_project;
 pub use doctor::doctor;
 pub use export_review::{apply_review, export_review};
-pub use fetch_project::fetch_project;
+pub use fetch_project::{fetch_project, fetch_project_wallets, FetchHooks};
 pub use normalise_project::normalise_project;
 pub use pipeline::{
-    calculate_uk, export_review_all, import_cex, ledger_build, ledger_price, pack_hmrc,
-    prices_fetch, prices_import, prices_missing,
+    calculate_uk, export_review_all, import_cex, import_cex_if_declared, ledger_build, ledger_price,
+    pack_hmrc, prices_fetch, prices_import, prices_missing,
 };
 pub use preflight::preflight;
 pub use project_ops::{
     project_clean, project_clean_confirm, project_clean_plan, project_paths, project_status,
-    workflow_finalize_year, workflow_refresh_review, workflow_startup, workflow_sync_wallets,
-    CleanPlanEntry, CleanTarget,
+    workflow_finalize_year, workflow_prepare, workflow_rebuild_ledger, workflow_refresh_review,
+    workflow_startup, workflow_sync_wallets, CleanPlanEntry, CleanTarget,
 };
 pub use readiness::readiness;
 pub use run_demo::run_demo;

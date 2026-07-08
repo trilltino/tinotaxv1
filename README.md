@@ -173,7 +173,8 @@ The deny gate is Windows-targeted for the v1 desktop/CLI release surface; see
 `docs/dependency-policy.md` for accepted license exceptions and tracked Tauri
 transitive advisories.
 
-Docs: [architecture](docs/architecture.md) · [commands](docs/commands.md) ·
+Docs: [installation](docs/installation.md) ·
+[architecture](docs/architecture.md) · [commands](docs/commands.md) ·
 [data model](docs/data_model.md) · [review workflow](docs/review_workflow.md) ·
 [CEX imports](docs/cex_imports.md) · [pricing](docs/pricing.md) ·
 [UK tax engine](docs/uk_tax_engine.md) ·
